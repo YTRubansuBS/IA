@@ -1,3 +1,4 @@
+import { GoogleGenAI } from "@google/genai";
 import { NextResponse } from "next/server";
 
 export const runtime = "nodejs";
@@ -15,37 +16,20 @@ type Source = {
   url: string;
 };
 
-function extractSources(output: unknown): Source[] {
-  if (!Array.isArray(output)) return [];
+function extractSources(response: any): Source[] {
+  const chunks = response?.candidates?.[0]?.groundingMetadata?.groundingChunks;
+  if (!Array.isArray(chunks)) return [];
 
   const found = new Map<string, Source>();
 
-  for (const item of output) {
-    if (!item || typeof item !== "object") continue;
+  for (const chunk of chunks) {
+    const web = chunk?.web;
+    if (!web?.uri) continue;
 
-    const record = item as Record<string, unknown>;
-    if (record.type !== "web_search_call") continue;
-
-    const action = record.action;
-    if (!action || typeof action !== "object") continue;
-
-    const sources = (action as Record<string, unknown>).sources;
-    if (!Array.isArray(sources)) continue;
-
-    for (const source of sources) {
-      if (!source || typeof source !== "object") continue;
-      const value = source as Record<string, unknown>;
-      const url = typeof value.url === "string" ? value.url : "";
-      if (!url) continue;
-
-      found.set(url, {
-        title:
-          typeof value.title === "string" && value.title.trim()
-            ? value.title.trim()
-            : url,
-        url,
-      });
-    }
+    found.set(web.uri, {
+      title: typeof web.title === "string" && web.title.trim() ? web.title.trim() : web.uri,
+      url: web.uri,
+    });
   }
 
   return [...found.values()];
@@ -53,13 +37,13 @@ function extractSources(output: unknown): Source[] {
 
 export async function POST(request: Request) {
   try {
-    const apiKey = process.env.OPENAI_API_KEY;
+    const apiKey = process.env.GEMINI_API_KEY;
 
     if (!apiKey) {
       return NextResponse.json(
         {
           error:
-            "OPENAI_API_KEY n’est pas configurée. Ajoute ta clé OpenAI dans les variables d’environnement.",
+            "GEMINI_API_KEY n’est pas configurée. Ajoute ta clé Gemini dans les variables d’environnement.",
         },
         { status: 500 },
       );
@@ -69,10 +53,7 @@ export async function POST(request: Request) {
     const messages = Array.isArray(body.messages) ? body.messages : [];
 
     if (messages.length === 0) {
-      return NextResponse.json(
-        { error: "Envoie au moins un message." },
-        { status: 400 },
-      );
+      return NextResponse.json({ error: "Envoie au moins un message." }, { status: 400 });
     }
 
     const safeMessages = messages
@@ -84,75 +65,35 @@ export async function POST(request: Request) {
           message.content.trim().length > 0,
       )
       .map((message) => ({
-        role: message.role,
-        content: message.content.trim().slice(0, MAX_MESSAGE_LENGTH),
+        role: message.role === "assistant" ? "model" : "user",
+        parts: [{ text: message.content.trim().slice(0, MAX_MESSAGE_LENGTH) }],
       }));
 
     if (safeMessages.length === 0) {
-      return NextResponse.json(
-        { error: "Le message est vide." },
-        { status: 400 },
-      );
+      return NextResponse.json({ error: "Le message est vide." }, { status: 400 });
     }
 
-    const upstream = await fetch("https://api.openai.com/v1/responses", {
-      method: "POST",
-      headers: {
-        "Content-Type": "application/json",
-        Authorization: "Bearer " + apiKey,
+    const ai = new GoogleGenAI({ apiKey });
+
+    const response = await ai.models.generateContent({
+      model: process.env.GEMINI_MODEL || "gemini-3.6-flash",
+      contents: safeMessages,
+      config: {
+        systemInstruction:
+          "Tu es une IA utile, claire et honnête. Utilise Google Search pour rechercher sur Internet avant de répondre lorsque des informations récentes, vérifiables ou externes sont nécessaires. Donne une réponse directement utile, dans la langue de l’utilisateur. Ne présente pas une information incertaine comme un fait. Utilise les résultats de recherche pour améliorer la précision et cite les sources pertinentes.",
+        tools: [{ googleSearch: {} }],
       },
-      body: JSON.stringify({
-        model: process.env.OPENAI_MODEL || "gpt-6-astra",
-        instructions: [
-          "Tu es une IA utile, claire et honnête.",
-          "Pour chaque message utilisateur, effectue obligatoirement une recherche web avant de répondre.",
-          "Utilise les informations trouvées sur le web pour répondre, surtout pour les sujets récents ou susceptibles d’avoir changé.",
-          "Ne présente pas une information incertaine comme un fait.",
-          "Réponds dans la langue utilisée par l’utilisateur.",
-          "Quand la recherche apporte des sources pertinentes, mentionne clairement les sources dans ta réponse.",
-        ].join(" "),
-        tools: [
-          {
-            type: "web_search",
-            search_context_size: "medium",
-            external_web_access: true,
-          },
-        ],
-        tool_choice: "required",
-        include: ["web_search_call.action.sources"],
-        store: false,
-        input: safeMessages,
-      }),
     });
-
-    const data = (await upstream.json()) as {
-      output_text?: string;
-      output?: unknown;
-      error?: { message?: string };
-    };
-
-    if (!upstream.ok) {
-      return NextResponse.json(
-        {
-          error:
-            data.error?.message ||
-            "L’API OpenAI a refusé la requête. Vérifie ta clé et les limites de ton compte.",
-        },
-        { status: upstream.status },
-      );
-    }
 
     return NextResponse.json({
-      answer:
-        data.output_text?.trim() ||
-        "Je n’ai pas pu générer de réponse à partir des résultats web.",
-      sources: extractSources(data.output),
+      answer: response.text?.trim() || "Je n’ai pas réussi à générer une réponse.",
+      sources: extractSources(response),
     });
   } catch (error) {
-    console.error("Chat API error:", error);
+    console.error("Gemini chat error:", error);
 
     return NextResponse.json(
-      { error: "Erreur serveur. Réessaie dans quelques secondes." },
+      { error: "Erreur serveur. Vérifie ta clé Gemini et réessaie." },
       { status: 500 },
     );
   }
