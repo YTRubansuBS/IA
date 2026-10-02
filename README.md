@@ -1,27 +1,28 @@
-# Backrooms — Survival
+# Backrooms // Level 0
 
-Un jeu narratif de survie dans les Backrooms.
+Une expérience 3D de survie jouable directement dans le navigateur.
 
-À chaque tour, le joueur choisit une action. Le moteur Gemini crée une nouvelle scène, de nouvelles conséquences et quatre nouveaux choix. Un petit historique des événements récents est envoyé au moteur pour garder la continuité et varier les situations.
+Le jeu n'utilise aucune API externe ni clé d'IA. L'environnement est généré procéduralement dans Three.js : labyrinthes, lumières, anomalies, brouillard et événements d'ambiance.
 
-## Gameplay
+## Contrôles
 
-Le joueur commence au Level 0 avec une petite réserve de ressources.
+- ZQSD / WASD : déplacement
+- Souris : regarder autour de soi
+- Shift : sprint
+- F : lampe torche
+- P : pause
+- Sur mobile : boutons tactiles pour bouger et glisser sur l'écran pour regarder
 
-Statistiques : santé, lucidité, faim, soif, étage et inventaire.
+## Développement
 
-Le jeu est conçu pour continuer pendant énormément de tours : les décors, événements, objets, chemins et choix sont générés dynamiquement.
+Node.js 20.9+.
 
-## Installation
+`npm install`
+`npm run dev`
 
-Prérequis : Node.js 20.9 ou plus récent.
+## Production
 
-Copie `.env.example` vers `.env.local`, puis ajoute ta clé Gemini dans `GEMINI_API_KEY`.
+`npm run build`
+`npm start`
 
-Lance ensuite `npm install`, puis `npm run dev`.
-
-## Vercel
-
-Ajoute `GEMINI_API_KEY` dans les Environment Variables de ton projet Vercel. `GEMINI_MODEL` peut rester à `gemini-3.8-flash`.
-
-La clé API est utilisée uniquement côté serveur.
+Le jeu utilise Three.js pour le rendu 3D.
