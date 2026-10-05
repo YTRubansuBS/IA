@@ -2,8 +2,8 @@ import type { Metadata } from "next";
 import "./globals.css";
 
 export const metadata: Metadata = {
-  title: "Backrooms // Level 0",
-  description: "Une expérience 3D de survie dans un labyrinthe procédural.",
+  title: "Project Desk — espace partagé",
+  description: "Un espace de travail collaboratif façon Word/Notion avec tâches et assistant IA.",
 };
 
 export default function RootLayout({
