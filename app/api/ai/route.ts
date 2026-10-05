@@ -3,75 +3,65 @@ import { GoogleGenAI } from "@google/genai";
 
 const PASSWORD = "Weapons RNG";
 
-function localAssistant(prompt: string, pageTitle: string, pageContent: string) {
-  const text = prompt.toLowerCase();
-
-  if (text.includes("tâche") || text.includes("task")) {
-    return "Voici une mini-liste de tâches utiles :\n\n1. Définir l’objectif exact.\n2. Écrire les étapes principales.\n3. Préparer un premier test.\n4. Vérifier les erreurs.\n5. Noter ce qui reste à améliorer.";
-  }
-
-  if (text.includes("structure") || text.includes("organise")) {
-    return (
-      "Je te conseille cette structure :\n\n# " +
-      (pageTitle || "Nouvelle page") +
-      "\n\n## Objectif\nCe que cette page doit permettre de comprendre.\n\n## Fonctionnement\nLes étapes, règles ou décisions importantes.\n\n## À faire\nLes éléments qui restent à réaliser.\n\n## Notes\nQuestions, idées et décisions de l’équipe."
-    );
-  }
-
-  if (text.includes("roadmap") || text.includes("plan")) {
-    return "Plan proposé :\n\n## Étape 1 — Base\nMettre en place la fonctionnalité principale et vérifier qu’elle fonctionne.\n\n## Étape 2 — Interface\nRendre l’utilisation simple et claire.\n\n## Étape 3 — Tests\nTester les cas normaux et les erreurs.\n\n## Étape 4 — Finitions\nCorriger, nettoyer et préparer la prochaine version.";
-  }
-
-  if (text.includes("améliore") || text.includes("réécris")) {
-    return pageContent
-      ? "Voici une direction d’amélioration :\n\n- Commencer par un objectif clair.\n- Regrouper les informations par thèmes.\n- Mettre les décisions importantes en premier.\n- Finir par une section « À faire ».\n\nLe texte actuel peut être conservé puis réorganisé avec cette structure."
-      : "Commence par une phrase d’objectif, puis ajoute 3 sections : fonctionnement, décisions et prochaines étapes.";
-  }
-
-  return "Je peux t’aider à construire cette page. Essaie une demande comme « crée une roadmap », « organise cette page », « transforme cette idée en plan » ou « donne-moi les prochaines tâches ».";
-}
-
 export async function POST(request: Request) {
   if (request.headers.get("x-workspace-password") !== PASSWORD) {
     return NextResponse.json({ error: "Unauthorized" }, { status: 401 });
   }
 
   const body = await request.json().catch(() => null);
-  const prompt = typeof body?.prompt === "string" ? body.prompt.trim().slice(0, 4000) : "";
-  const pageTitle = typeof body?.pageTitle === "string" ? body.pageTitle.slice(0, 120) : "";
-  const pageContent = typeof body?.pageContent === "string" ? body.pageContent.slice(0, 12000) : "";
+  const prompt = typeof body?.prompt === "string" ? body.prompt.trim().slice(0, 6000) : "";
+  const pageTitle = typeof body?.pageTitle === "string" ? body.pageTitle.slice(0, 150) : "";
+  const pageContent = typeof body?.pageContent === "string" ? body.pageContent.slice(0, 15000) : "";
 
-  if (!prompt) return NextResponse.json({ error: "Prompt required" }, { status: 400 });
+  if (!prompt) {
+    return NextResponse.json({ error: "Prompt required" }, { status: 400 });
+  }
 
-  const apiKey = process.env.GEMINI_API_KEY;
-
-  if (!apiKey) {
-    return NextResponse.json({
-      reply: localAssistant(prompt, pageTitle, pageContent),
-      source: "local",
-    });
+  const key = process.env.IA;
+  if (!key) {
+    return NextResponse.json(
+      { error: "Variable IA manquante. Ajoute IA dans les Environment Variables de Vercel." },
+      { status: 500 }
+    );
   }
 
   try {
-    const ai = new GoogleGenAI({ apiKey });
+    const ai = new GoogleGenAI({ apiKey: key });
     const response = await ai.models.generateContent({
       model: "gemini-3.8-flash",
-      contents: prompt,
+      contents: [
+        {
+          role: "user",
+          parts: [
+            {
+              text:
+                "Tu es l'assistant IA d'un espace de travail collaboratif. Aide à créer, structurer et améliorer des pages de projet. Réponds en français, de façon concrète et directement réutilisable.\n\n" +
+                "Page actuelle : " +
+                pageTitle +
+                "\n\nContenu actuel :\n" +
+                pageContent +
+                "\n\nDemande :\n" +
+                prompt,
+            },
+          ],
+        },
+      ],
       config: {
         systemInstruction:
-          "Tu es l’assistant d’un espace de travail collaboratif. Aide à créer et organiser des pages de projet. Réponds en français, sois concret, structuré et directement utilisable. Ne prétends pas avoir modifié une page : tu proposes du contenu.",
-        maxOutputTokens: 800,
+          "Tu aides une équipe à organiser un projet. Tu peux proposer des titres, structures, textes, idées, plans et tâches. Ne prétends jamais avoir effectué une modification que tu n'as pas réellement faite.",
+        maxOutputTokens: 1200,
       },
     });
 
     return NextResponse.json({
-      reply: response.text || localAssistant(prompt, pageTitle, pageContent),
+      reply: response.text || "Gemini n’a renvoyé aucun texte.",
       source: "gemini",
     });
-  } catch {
-    return NextResponse.json({
-      reply: localAssistant(prompt, pageTitle, pageContent),
-      source: "local-fallback",
-    });
+  } catch (error) {
+    console.error("[ai]", error);
+    return NextResponse.json(
+      { error: "Impossible de contacter Gemini.", detail: error instanceof Error ? error.message : "Unknown error" },
+      { status: 502 }
+    );
   }
 }
