@@ -22,56 +22,57 @@ function parseResult(raw: string): EditResult {
     }
   } catch {}
 
-  return {
-    code: value,
-    explanation: "Code modifié.",
+  return { code: value, explanation: "Code modifié." };
+}
+
+function getExactError(error: unknown): { message: string; status: number; type: string } {
+  const value = error as {
+    message?: unknown;
+    status?: unknown;
+    statusCode?: unknown;
+    name?: unknown;
+    error?: { message?: unknown; status?: unknown; code?: unknown };
   };
+
+  const nested = value?.error;
+  const message =
+    typeof nested?.message === "string"
+      ? nested.message
+      : typeof value?.message === "string"
+        ? value.message
+        : String(error);
+
+  const rawStatus = nested?.status ?? value?.status ?? value?.statusCode;
+  const status = typeof rawStatus === "number" && rawStatus >= 400 && rawStatus < 600 ? rawStatus : 502;
+  const type = typeof value?.name === "string" ? value.name : "GeminiAPIError";
+
+  return { message, status, type };
 }
 
 export async function POST(request: Request) {
   const body = await request.json().catch(() => null);
-
-  const prompt =
-    typeof body?.prompt === "string"
-      ? body.prompt.trim().slice(0, 8000)
-      : "";
-
-  const source =
-    typeof body?.source === "string"
-      ? body.source.slice(0, 100000)
-      : "";
-
-  const scriptName =
-    typeof body?.scriptName === "string"
-      ? body.scriptName.slice(0, 200)
-      : "Script Luau";
+  const prompt = typeof body?.prompt === "string" ? body.prompt.trim().slice(0, 8000) : "";
+  const source = typeof body?.source === "string" ? body.source.slice(0, 100000) : "";
+  const scriptName = typeof body?.scriptName === "string" ? body.scriptName.slice(0, 200) : "Script Luau";
 
   if (!prompt) {
-    return NextResponse.json(
-      { error: "Décris la modification à faire." },
-      { status: 400 }
-    );
+    return NextResponse.json({ error: "Décris la modification à faire." }, { status: 400 });
   }
 
   if (!source.trim()) {
-    return NextResponse.json(
-      { error: "Colle un script avant de lancer la modification." },
-      { status: 400 }
-    );
+    return NextResponse.json({ error: "Colle un script avant de lancer la modification." }, { status: 400 });
   }
 
   const key = process.env.IA;
-
   if (!key) {
     return NextResponse.json(
-      { error: "La variable IA est absente des Environment Variables." },
+      { error: "La variable IA est absente des Environment Variables.", errorType: "ConfigurationError" },
       { status: 500 }
     );
   }
 
   try {
     const client = new GoogleGenAI({ apiKey: key });
-
     const response = await client.models.generateContent({
       model: "gemini-3.8-flash",
       contents: [
@@ -93,32 +94,30 @@ export async function POST(request: Request) {
         prompt,
       ].join("\n"),
       config: {
-        systemInstruction:
-          "Tu produis du code Luau complet, cohérent et directement copiable.",
+        systemInstruction: "Tu produis du code Luau complet, cohérent et directement copiable.",
         maxOutputTokens: 16000,
         temperature: 0.15,
       },
     });
 
     const result = parseResult(response.text || "");
-
     if (!result.code.trim()) {
-      return NextResponse.json(
-        { error: "Aucun code n'a été généré." },
-        { status: 502 }
-      );
+      return NextResponse.json({ error: "Aucun code n'a été généré.", errorType: "EmptyResponse" }, { status: 502 });
     }
 
     return NextResponse.json(result);
   } catch (error) {
-    console.error("[code-ai]", error);
+    console.error("[code-ai] Gemini error:", error);
+    const exact = getExactError(error);
 
     return NextResponse.json(
       {
-        error: "Impossible de contacter l'IA.",
-        detail: error instanceof Error ? error.message : "Erreur inconnue",
+        error: exact.message,
+        errorType: exact.type,
+        errorStatus: exact.status,
+        hint: "Regarde le message exact ci-dessus : il indique notamment si la clé est invalide, expirée, limitée ou si le modèle est indisponible.",
       },
-      { status: 502 }
+      { status: exact.status }
     );
   }
 }
