@@ -1,14 +1,20 @@
 import { NextResponse } from "next/server";
 
-const ACCESS_PASSWORD = process.env.ACCESS_PASSWORD || "Fourchette";
-
 export async function POST(request: Request) {
   const body = await request.json().catch(() => null);
   const password = typeof body?.password === "string" ? body.password : "";
+  const expected = process.env.ACCESS_PASSWORD;
 
-  if (password !== ACCESS_PASSWORD) {
+  if (!expected) {
     return NextResponse.json(
-      { error: "Code d'accès incorrect." },
+      { error: "Le code d’accès n’est pas configuré sur le serveur.", errorType: "ConfigurationError" },
+      { status: 500 }
+    );
+  }
+
+  if (!password || password !== expected) {
+    return NextResponse.json(
+      { error: "Code d’accès incorrect." },
       { status: 401 }
     );
   }
