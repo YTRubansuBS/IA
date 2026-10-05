@@ -1,5 +1,5 @@
 {
-  "name": "backrooms-level-zero",
+  "name": "project-workspace",
   "version": "1.0.0",
   "private": true,
   "scripts": {
@@ -9,6 +9,7 @@
     "typecheck": "tsc --noEmit"
   },
   "dependencies": {
+    "@google/genai": "2.27.0",
     "next": "16.3.8",
     "react": "19.3.0",
     "react-dom": "19.3.0",
