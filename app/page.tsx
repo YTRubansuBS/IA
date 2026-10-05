@@ -3,8 +3,6 @@
 import { FormEvent, useEffect, useMemo, useState } from "react";
 
 const ACCOUNTS_KEY = "script-ai-accounts-v3";
-const APP_QUOTA_KEY = "script-ai-app-quota-v1";
-const APP_DAILY_QUOTA = 25;
 const SESSION_KEY = "script-ai-session-v3";
 const DRAFT_KEY = "script-ai-draft-v3:";
 const CHATS_KEY = "script-ai-chats-v3:";
@@ -64,26 +62,6 @@ function saveChats(user: string, chats: Chat[]) {
   localStorage.setItem(CHATS_KEY + user, JSON.stringify(chats.slice(0, 30)));
 }
 
-function getDailyQuotaUsed() {
-  const today = new Date().toISOString().slice(0, 10);
-  try {
-    const raw = localStorage.getItem(APP_QUOTA_KEY);
-    const value = raw ? JSON.parse(raw) : null;
-    if (value?.date !== today) {
-      localStorage.setItem(APP_QUOTA_KEY, JSON.stringify({ date: today, used: 0 }));
-      return 0;
-    }
-    return typeof value?.used === "number" ? Math.max(0, value.used) : 0;
-  } catch {
-    return 0;
-  }
-}
-
-function setDailyQuotaUsed(used: number) {
-  const date = new Date().toISOString().slice(0, 10);
-  localStorage.setItem(APP_QUOTA_KEY, JSON.stringify({ date, used }));
-}
-
 export default function Home() {
   const [ready, setReady] = useState(false);
 
@@ -93,8 +71,6 @@ export default function Home() {
   const [password2, setPassword2] = useState("");
   const [accessPassword, setAccessPassword] = useState("");
   const [authError, setAuthError] = useState("");
-  const [quotaUsed, setQuotaUsed] = useState(0);
-  const [latestTokens, setLatestTokens] = useState<number | null>(null);
   const [accountTotal, setAccountTotal] = useState(0);
   const [currentUser, setCurrentUser] = useState("");
 
@@ -122,7 +98,6 @@ export default function Home() {
       setUsername(session);
     }
 
-    setQuotaUsed(getDailyQuotaUsed());
     setReady(true);
   }, []);
 
@@ -308,17 +283,6 @@ export default function Home() {
       return;
     }
 
-    const used = getDailyQuotaUsed();
-    if (used >= APP_DAILY_QUOTA) {
-      setQuotaUsed(used);
-      flash("Quota de protection atteint pour aujourd'hui.");
-      return;
-    }
-
-    const nextQuota = used + 1;
-    setDailyQuotaUsed(nextQuota);
-    setQuotaUsed(nextQuota);
-
     if (!activeChatId) {
       const chat: Chat = {
         id: crypto.randomUUID(),
@@ -380,10 +344,6 @@ export default function Home() {
       });
 
       const data = await response.json();
-
-      if (typeof data?.usage?.totalTokens === "number") {
-        setLatestTokens(data.usage.totalTokens);
-      }
 
       if (!response.ok) {
         const errorText = [data.error, data.detail]
@@ -495,11 +455,6 @@ export default function Home() {
           </div>
 
           <section className="authCard">
-            <div className="accessBanner">
-              <div><strong>Accès privé</strong><span>Entre le code requis à chaque connexion ou création.</span></div>
-              <b>Fourchette</b>
-            </div>
-
             <div className="tabs">
               <button className={authMode === "login" ? "tab active" : "tab"} onClick={() => { setAuthMode("login"); setAuthError(""); }}>Connexion</button>
               <button className={authMode === "create" ? "tab active" : "tab"} onClick={() => { setAuthMode("create"); setAuthError(""); }}>Créer un compte</button>
@@ -566,10 +521,7 @@ export default function Home() {
             <div className="modelDot">✦</div>
             <div><strong>Script AI</strong><span>Assistant Luau</span></div>
           </div>
-          <div className="headerRight">
-            <div className="quotaPill"><i /> Quota app&nbsp;: <b>{Math.max(0, APP_DAILY_QUOTA - quotaUsed)}</b>/{APP_DAILY_QUOTA}</div>
-            <div className="headerPill"><i /> Gemini{latestTokens !== null ? " · " + latestTokens.toLocaleString("fr-FR") + " tok." : ""}</div>
-          </div>
+          <div className="headerPill"><i /> Gemini</div>
         </header>
 
         <div className="messages">
