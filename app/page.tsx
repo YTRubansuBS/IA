@@ -6,10 +6,24 @@ const WORKSPACE_PASSWORD = "Weapons RNG";
 const ACCOUNTS_KEY = "script-ai-accounts-v3";
 const SESSION_KEY = "script-ai-session-v3";
 const DRAFT_KEY = "script-ai-draft-v3:";
-const HISTORY_KEY = "script-ai-history-v3:";
+const CHATS_KEY = "script-ai-chats-v3:";
 
 type Account = { username: string; passwordHash: string; createdAt: number };
-type HistoryItem = { id: string; request: string; code: string; explanation: string; time: number };
+type Chat = {
+  id: string;
+  title: string;
+  createdAt: number;
+  updatedAt: number;
+  messages: Message[];
+};
+type Message = {
+  id: string;
+  role: "user" | "assistant";
+  content: string;
+  code?: string;
+  explanation?: string;
+  time: number;
+};
 
 const starter = [
   'local Players = game:GetService("Players")',
@@ -22,10 +36,12 @@ const starter = [
 async function hash(value: string) {
   const data = new TextEncoder().encode(value);
   const buffer = await crypto.subtle.digest("SHA-256", data);
-  return Array.from(new Uint8Array(buffer)).map((b) => b.toString(16).padStart(2, "0")).join("");
+  return Array.from(new Uint8Array(buffer))
+    .map((b) => b.toString(16).padStart(2, "0"))
+    .join("");
 }
 
-function accounts(): Account[] {
+function getAccounts(): Account[] {
   try {
     const raw = localStorage.getItem(ACCOUNTS_KEY);
     return raw ? JSON.parse(raw) : [];
@@ -34,48 +50,64 @@ function accounts(): Account[] {
   }
 }
 
-function historyOf(user: string): HistoryItem[] {
+function getChats(user: string): Chat[] {
   try {
-    const raw = localStorage.getItem(HISTORY_KEY + user);
+    const raw = localStorage.getItem(CHATS_KEY + user);
     return raw ? JSON.parse(raw) : [];
   } catch {
     return [];
   }
 }
 
+function saveChats(user: string, chats: Chat[]) {
+  localStorage.setItem(CHATS_KEY + user, JSON.stringify(chats.slice(0, 30)));
+}
+
 export default function Home() {
   const [ready, setReady] = useState(false);
+
   const [authMode, setAuthMode] = useState<"login" | "create">("login");
-  const [user, setUser] = useState("");
-  const [pass, setPass] = useState("");
-  const [pass2, setPass2] = useState("");
+  const [username, setUsername] = useState("");
+  const [password, setPassword] = useState("");
+  const [password2, setPassword2] = useState("");
   const [authError, setAuthError] = useState("");
   const [accountTotal, setAccountTotal] = useState(0);
-
   const [currentUser, setCurrentUser] = useState("");
+
   const [script, setScript] = useState(starter);
-  const [request, setRequest] = useState("");
-  const [result, setResult] = useState("");
-  const [explanation, setExplanation] = useState("");
-  const [history, setHistory] = useState<HistoryItem[]>([]);
+  const [prompt, setPrompt] = useState("");
+  const [chats, setChats] = useState<Chat[]>([]);
+  const [activeChatId, setActiveChatId] = useState("");
+  const [codeOpen, setCodeOpen] = useState(false);
   const [busy, setBusy] = useState(false);
   const [notice, setNotice] = useState("");
 
+  const activeChat = useMemo(
+    () => chats.find((chat) => chat.id === activeChatId) ?? null,
+    [chats, activeChatId]
+  );
+
+  const messageCount = activeChat?.messages.length ?? 0;
+
   useEffect(() => {
-    const list = accounts();
+    const list = getAccounts();
     const session = localStorage.getItem(SESSION_KEY) || "";
     setAccountTotal(list.length);
 
-    if (session && list.some((a) => a.username === session)) {
+    if (session && list.some((account) => account.username === session)) {
       setCurrentUser(session);
-      setHistory(historyOf(session));
+
+      const savedChats = getChats(session);
+      setChats(savedChats);
+
+      const first = savedChats[0];
+      if (first) setActiveChatId(first.id);
 
       try {
         const raw = localStorage.getItem(DRAFT_KEY + session);
         if (raw) {
           const draft = JSON.parse(raw);
           if (draft.script) setScript(draft.script);
-          if (draft.request) setRequest(draft.request);
         }
       } catch {}
     }
@@ -85,105 +117,201 @@ export default function Home() {
 
   useEffect(() => {
     if (!currentUser) return;
-    localStorage.setItem(DRAFT_KEY + currentUser, JSON.stringify({ script, request }));
-  }, [currentUser, script, request]);
+    localStorage.setItem(DRAFT_KEY + currentUser, JSON.stringify({ script }));
+    saveChats(currentUser, chats);
+  }, [currentUser, script, chats]);
 
-  const lines = useMemo(() => Math.max(1, script.split("\n").length), [script]);
-  const resultLines = useMemo(() => (result ? Math.max(1, result.split("\n").length) : 0), [result]);
-
-  const flash = (message: string) => {
-    setNotice(message);
+  const flash = (text: string) => {
+    setNotice(text);
     window.setTimeout(() => setNotice(""), 2200);
+  };
+
+  const startChat = () => {
+    const chat: Chat = {
+      id: crypto.randomUUID(),
+      title: "Nouvelle conversation",
+      createdAt: Date.now(),
+      updatedAt: Date.now(),
+      messages: [],
+    };
+
+    const next = [chat, ...chats];
+    setChats(next);
+    setActiveChatId(chat.id);
+    setPrompt("");
+    flash("Nouveau chat.");
+  };
+
+  const updateActiveChat = (updater: (chat: Chat) => Chat) => {
+    setChats((current) =>
+      current.map((chat) => (chat.id === activeChatId ? updater(chat) : chat))
+    );
   };
 
   const login = async (event: FormEvent) => {
     event.preventDefault();
     setAuthError("");
 
-    const found = accounts().find((a) => a.username.toLowerCase() === user.trim().toLowerCase());
-    if (!found) return setAuthError("Ce compte n'existe pas sur cet appareil.");
+    const found = getAccounts().find(
+      (account) => account.username.toLowerCase() === username.trim().toLowerCase()
+    );
 
-    if ((await hash(pass)) !== found.passwordHash) {
-      return setAuthError("Mot de passe incorrect.");
+    if (!found) {
+      setAuthError("Ce compte n’existe pas sur cet appareil.");
+      return;
+    }
+
+    if ((await hash(password)) !== found.passwordHash) {
+      setAuthError("Mot de passe incorrect.");
+      return;
     }
 
     localStorage.setItem(SESSION_KEY, found.username);
     setCurrentUser(found.username);
-    setHistory(historyOf(found.username));
+
+    const savedChats = getChats(found.username);
+    setChats(savedChats);
+    setActiveChatId(savedChats[0]?.id || "");
 
     try {
       const raw = localStorage.getItem(DRAFT_KEY + found.username);
       const draft = raw ? JSON.parse(raw) : null;
       setScript(draft?.script || starter);
-      setRequest(draft?.request || "");
     } catch {
       setScript(starter);
-      setRequest("");
     }
 
-    setPass("");
+    setPassword("");
   };
 
   const createAccount = async (event: FormEvent) => {
     event.preventDefault();
     setAuthError("");
 
-    const name = user.trim();
-    if (name.length < 3) return setAuthError("Le pseudo doit avoir au moins 3 caractères.");
-    if (pass.length < 4) return setAuthError("Le mot de passe doit avoir au moins 4 caractères.");
-    if (pass !== pass2) return setAuthError("Les mots de passe ne correspondent pas.");
-
-    const list = accounts();
-    if (list.some((a) => a.username.toLowerCase() === name.toLowerCase())) {
-      return setAuthError("Ce pseudo existe déjà sur cet appareil.");
+    const name = username.trim();
+    if (name.length < 3) {
+      setAuthError("Le pseudo doit contenir au moins 3 caractères.");
+      return;
+    }
+    if (password.length < 4) {
+      setAuthError("Le mot de passe doit contenir au moins 4 caractères.");
+      return;
+    }
+    if (password !== password2) {
+      setAuthError("Les mots de passe ne correspondent pas.");
+      return;
     }
 
-    const next = list.concat({
+    const existing = getAccounts();
+    if (existing.some((account) => account.username.toLowerCase() === name.toLowerCase())) {
+      setAuthError("Ce pseudo existe déjà sur cet appareil.");
+      return;
+    }
+
+    const next = existing.concat({
       username: name,
-      passwordHash: await hash(pass),
+      passwordHash: await hash(password),
       createdAt: Date.now(),
     });
 
     localStorage.setItem(ACCOUNTS_KEY, JSON.stringify(next));
     localStorage.setItem(SESSION_KEY, name);
+
     setAccountTotal(next.length);
     setCurrentUser(name);
-    setHistory([]);
+    setChats([]);
+    setActiveChatId("");
     setScript(starter);
-    setRequest("");
-    setResult("");
-    setExplanation("");
-    setPass("");
-    setPass2("");
+    setPrompt("");
+    setPassword("");
+    setPassword2("");
   };
 
   const logout = () => {
     localStorage.removeItem(SESSION_KEY);
     setCurrentUser("");
-    setResult("");
-    setExplanation("");
+    setChats([]);
+    setActiveChatId("");
   };
 
   const deleteAccount = () => {
     if (!currentUser) return;
-    const next = accounts().filter((a) => a.username !== currentUser);
-    localStorage.setItem(ACCOUNTS_KEY, JSON.stringify(next));
+
+    const remaining = getAccounts().filter(
+      (account) => account.username !== currentUser
+    );
+
+    localStorage.setItem(ACCOUNTS_KEY, JSON.stringify(remaining));
     localStorage.removeItem(SESSION_KEY);
     localStorage.removeItem(DRAFT_KEY + currentUser);
-    localStorage.removeItem(HISTORY_KEY + currentUser);
-    setAccountTotal(next.length);
+    localStorage.removeItem(CHATS_KEY + currentUser);
+
+    setAccountTotal(remaining.length);
     setCurrentUser("");
-    setHistory([]);
-    setResult("");
-    setExplanation("");
+    setChats([]);
+    setActiveChatId("");
   };
 
-  const generate = async () => {
-    if (!script.trim()) return flash("Colle un script.");
-    if (!request.trim()) return flash("Décris la modification.");
+  const sendPrompt = async () => {
+    const cleanPrompt = prompt.trim();
 
+    if (!cleanPrompt) {
+      flash("Écris une demande.");
+      return;
+    }
+
+    if (!script.trim()) {
+      flash("Ajoute ton script avant de demander une modification.");
+      setCodeOpen(true);
+      return;
+    }
+
+    if (!activeChatId) {
+      const chat: Chat = {
+        id: crypto.randomUUID(),
+        title: cleanPrompt.slice(0, 42),
+        createdAt: Date.now(),
+        updatedAt: Date.now(),
+        messages: [],
+      };
+      setChats([chat, ...chats]);
+      setActiveChatId(chat.id);
+    }
+
+    const userMessage: Message = {
+      id: crypto.randomUUID(),
+      role: "user",
+      content: cleanPrompt,
+      time: Date.now(),
+    };
+
+    const targetChat = activeChat ?? {
+      id: activeChatId,
+      title: cleanPrompt.slice(0, 42),
+      createdAt: Date.now(),
+      updatedAt: Date.now(),
+      messages: [],
+    };
+
+    const withUser = {
+      ...targetChat,
+      title:
+        targetChat.title === "Nouvelle conversation"
+          ? cleanPrompt.slice(0, 42)
+          : targetChat.title,
+      updatedAt: Date.now(),
+      messages: targetChat.messages.concat(userMessage),
+    };
+
+    setChats((current) => {
+      const exists = current.some((chat) => chat.id === withUser.id);
+      return exists
+        ? current.map((chat) => (chat.id === withUser.id ? withUser : chat))
+        : [withUser, ...current];
+    });
+
+    setPrompt("");
     setBusy(true);
-    setNotice("");
 
     try {
       const response = await fetch("/api/ai", {
@@ -193,7 +321,7 @@ export default function Home() {
           "x-workspace-password": WORKSPACE_PASSWORD,
         },
         body: JSON.stringify({
-          prompt: request,
+          prompt: cleanPrompt,
           source: script,
           scriptName: "Script Luau",
         }),
@@ -202,75 +330,111 @@ export default function Home() {
       const data = await response.json();
 
       if (!response.ok) {
-        throw new Error([data.error, data.detail].filter(Boolean).join(" — ") || "Erreur Gemini");
-      }
+        const errorText = [data.error, data.detail]
+          .filter(Boolean)
+          .join(" — ");
 
-      const code = typeof data.code === "string" ? data.code : "";
-      const summary = typeof data.explanation === "string" ? data.explanation : "Modification générée.";
-
-      setResult(code);
-      setExplanation(summary);
-      flash("Gemini a terminé.");
-
-      if (currentUser && code) {
-        const item: HistoryItem = {
+        const errorMessage: Message = {
           id: crypto.randomUUID(),
-          request,
-          code,
-          explanation: summary,
+          role: "assistant",
+          content: errorText || "Gemini a renvoyé une erreur.",
           time: Date.now(),
         };
-        const next = [item].concat(history).slice(0, 15);
-        setHistory(next);
-        localStorage.setItem(HISTORY_KEY + currentUser, JSON.stringify(next));
+
+        setChats((current) =>
+          current.map((chat) =>
+            chat.id === withUser.id
+              ? { ...withUser, updatedAt: Date.now(), messages: withUser.messages.concat(errorMessage) }
+              : chat
+          )
+        );
+
+        return;
       }
+
+      const assistantMessage: Message = {
+        id: crypto.randomUUID(),
+        role: "assistant",
+        content: "Voici la version modifiée de ton script.",
+        code: typeof data.code === "string" ? data.code : "",
+        explanation:
+          typeof data.explanation === "string"
+            ? data.explanation
+            : "Modification générée par Gemini.",
+        time: Date.now(),
+      };
+
+      setChats((current) =>
+        current.map((chat) =>
+          chat.id === withUser.id
+            ? {
+                ...withUser,
+                updatedAt: Date.now(),
+                messages: withUser.messages.concat(assistantMessage),
+              }
+            : chat
+        )
+      );
+
+      flash("Gemini a répondu.");
     } catch (error) {
-      flash(error instanceof Error ? error.message : "Erreur inconnue.");
+      const errorMessage: Message = {
+        id: crypto.randomUUID(),
+        role: "assistant",
+        content:
+          error instanceof Error ? error.message : "Erreur de connexion à Gemini.",
+        time: Date.now(),
+      };
+
+      setChats((current) =>
+        current.map((chat) =>
+          chat.id === withUser.id
+            ? { ...withUser, updatedAt: Date.now(), messages: withUser.messages.concat(errorMessage) }
+            : chat
+        )
+      );
     } finally {
       setBusy(false);
     }
   };
 
-  const useResult = () => {
-    if (!result) return;
-    setScript(result);
-    setResult("");
-    setExplanation("");
-    flash("Code appliqué à l'éditeur.");
+  const applyCode = (code?: string) => {
+    if (!code) return;
+    setScript(code);
+    setCodeOpen(true);
+    flash("Le code de Gemini est maintenant dans ton script.");
   };
 
-  const copy = async () => {
-    if (!result) return;
-    await navigator.clipboard.writeText(result);
+  const copyCode = async (code?: string) => {
+    if (!code) return;
+    await navigator.clipboard.writeText(code);
     flash("Code copié.");
   };
 
-  const restore = (item: HistoryItem) => {
-    setResult(item.code);
-    setExplanation(item.explanation);
-    setRequest(item.request);
-    flash("Génération restaurée.");
-  };
-
-  if (!ready) return <main className="boot"><div>✦</div></main>;
+  if (!ready) {
+    return <main className="boot"><div>✦</div></main>;
+  }
 
   if (!currentUser) {
     return (
       <main className="authScreen">
-        <div className="glow one" /><div className="glow two" />
-        <section className="authGrid">
-          <div className="intro">
+        <div className="authGlow glowOne" />
+        <div className="authGlow glowTwo" />
+
+        <section className="authLayout">
+          <div className="authIntro">
             <div className="brandIcon">✦</div>
-            <div className="eyebrow">SCRIPT AI / LUau WORKSPACE</div>
-            <h1>Écris moins.<br /><span>Construis plus.</span></h1>
+            <div className="eyebrow">SCRIPT AI</div>
+            <h1>Ton assistant<br /><span>pour coder.</span></h1>
             <p>
-              Colle ton script, explique la modification en français naturel,
-              puis laisse Gemini produire la version complète.
+              Une interface inspirée de ChatGPT, conçue pour travailler avec tes
+              scripts Luau : tu donnes le code et tu expliques ce que tu veux changer.
             </p>
-            <div className="features">
-              <div><b>01</b><strong>Comprend le code</strong><small>Analyse le script avant de le modifier.</small></div>
-              <div><b>02</b><strong>Modifie précisément</strong><small>Garde les fonctionnalités non concernées.</small></div>
-              <div><b>03</b><strong>Compte local</strong><small>Compte, brouillons et historique restent sur ton appareil.</small></div>
+
+            <div className="introStats">
+              <span><b>01</b> Analyse</span>
+              <span><b>02</b> Modification</span>
+              <span><b>03</b> Code complet</span>
             </div>
           </div>
 
@@ -279,19 +443,22 @@ export default function Home() {
               <button className={authMode === "login" ? "tab active" : "tab"} onClick={() => { setAuthMode("login"); setAuthError(""); }}>Connexion</button>
               <button className={authMode === "create" ? "tab active" : "tab"} onClick={() => { setAuthMode("create"); setAuthError(""); }}>Créer un compte</button>
             </div>
-            <div className="authTitle">
-              <span>{authMode === "login" ? "BIENVENUE" : "NOUVEAU COMPTE"}</span>
-              <h2>{authMode === "login" ? "Continue ton projet." : "Crée ton profil local."}</h2>
-              <p>Les comptes sont sauvegardés dans le stockage local de ce navigateur.</p>
+
+            <div className="authCopy">
+              <span>{authMode === "login" ? "BON RETOUR" : "NOUVEAU COMPTE"}</span>
+              <h2>{authMode === "login" ? "Ouvre ton espace." : "Crée ton espace local."}</h2>
+              <p>Ton compte, ton brouillon et ton historique restent dans ce navigateur.</p>
             </div>
-            <form onSubmit={authMode === "login" ? login : createAccount} className="authForm">
-              <label>Pseudo<input value={user} onChange={(e) => setUser(e.target.value)} placeholder="Ex. Ruben" autoComplete="username" autoFocus /></label>
-              <label>Mot de passe<input type="password" value={pass} onChange={(e) => setPass(e.target.value)} placeholder="••••••••" autoComplete={authMode === "login" ? "current-password" : "new-password"} /></label>
-              {authMode === "create" && <label>Confirmation<input type="password" value={pass2} onChange={(e) => setPass2(e.target.value)} placeholder="••••••••" autoComplete="new-password" /></label>}
-              <button className="authSubmit" type="submit">{authMode === "login" ? "Ouvrir mon espace →" : "Créer mon compte →"}</button>
+
+            <form className="authForm" onSubmit={authMode === "login" ? login : createAccount}>
+              <label>Pseudo<input value={username} onChange={(e) => setUsername(e.target.value)} placeholder="Ex. Ruben" autoComplete="username" autoFocus /></label>
+              <label>Mot de passe<input type="password" value={password} onChange={(e) => setPassword(e.target.value)} placeholder="••••••••" autoComplete={authMode === "login" ? "current-password" : "new-password"} /></label>
+              {authMode === "create" && <label>Confirmer<input type="password" value={password2} onChange={(e) => setPassword2(e.target.value)} placeholder="••••••••" autoComplete="new-password" /></label>}
+              <button className="authSubmit" type="submit">{authMode === "login" ? "Continuer →" : "Créer mon compte →"}</button>
             </form>
-            {authError && <div className="authError">⚠ {authError}</div>}
-            <div className="localInfo"><span>●</span>{accountTotal} compte{accountTotal > 1 ? "s" : ""} local{accountTotal > 1 ? "aux" : ""} sur cet appareil</div>
+
+            {authError && <div className="authError">{authError}</div>}
+            <div className="localInfo"><span>●</span>{accountTotal} compte{accountTotal > 1 ? "s" : ""} local{accountTotal > 1 ? "aux" : ""}</div>
           </section>
         </section>
       </main>
@@ -299,77 +466,144 @@ export default function Home() {
   }
 
   return (
-    <main className="app">
-      <header className="topbar">
-        <div className="brand">
-          <div className="logoSmall">✦</div>
-          <div><strong>Script AI</strong><span>LUau development workspace</span></div>
+    <main className="chatApp">
+      <aside className="sidebar">
+        <div className="sideTop">
+          <div className="sideBrand"><div className="miniLogo">✦</div><strong>Script AI</strong></div>
+          <button className="newChat" onClick={startChat}><span>＋</span> Nouveau chat</button>
         </div>
-        <div className="ready"><i /> Gemini prêt</div>
-        <div className="profile">
-          <div className="avatar">{currentUser[0]?.toUpperCase()}</div>
-          <div><strong>{currentUser}</strong><span>compte local</span></div>
-          <button onClick={logout}>Quitter</button>
-        </div>
-      </header>
 
-      <section className="hero">
-        <div>
-          <span className="eyebrow">AI CODE WORKSHOP</span>
-          <h1>Modifie ton script avec Gemini.</h1>
-          <p>Colle · Décris · Génère · Choisis</p>
+        <div className="sideSectionLabel">Conversations</div>
+        <div className="chatList">
+          {chats.length === 0 ? (
+            <div className="noChats">Aucune conversation</div>
+          ) : chats.map((chat) => (
+            <button
+              key={chat.id}
+              className={chat.id === activeChatId ? "chatItem active" : "chatItem"}
+              onClick={() => setActiveChatId(chat.id)}
+            >
+              <span>◌</span>
+              <span>{chat.title}</span>
+            </button>
+          ))}
         </div>
-        <button onClick={() => { setScript(starter); setRequest(""); setResult(""); setExplanation(""); flash("Nouveau brouillon."); }}>＋ Nouveau script</button>
-      </section>
 
-      <section className="workspace">
-        <section className="panel">
-          <div className="panelHead">
-            <div><span>01</span><div><strong>Code actuel</strong><small>{lines} lignes · Luau</small></div></div>
-            <em>SOURCE</em>
+        <div className="sideBottom">
+          <div className="sideProfile">
+            <div className="avatar">{currentUser[0]?.toUpperCase()}</div>
+            <div><strong>{currentUser}</strong><span>Compte local</span></div>
           </div>
-          <textarea className="code" value={script} onChange={(e) => setScript(e.target.value)} spellCheck={false} placeholder="Colle ici ton Script, LocalScript ou ModuleScript..." />
-        </section>
+          <button onClick={logout}>↪ Déconnexion</button>
+        </div>
+      </aside>
 
-        <section className="center">
-          <div className="connector"><span /> GEMINI <span /></div>
-          <section className="panel prompt">
-            <div className="panelHead compact"><div><span>02</span><div><strong>Ta demande</strong><small>Explique ce que l’IA doit faire.</small></div></div></div>
-            <textarea className="promptBox" value={request} onChange={(e) => setRequest(e.target.value)} placeholder={"Ex :\nAjoute un système de sprint avec Shift.\nNe change rien d’autre."} />
-            <button className="generate" onClick={generate} disabled={busy}>{busy ? "Gemini travaille…" : "✦ Générer la modification"}</button>
-            <div className="quick"><button onClick={() => setRequest("Corrige les erreurs sans supprimer les fonctionnalités.")}>Réparer</button><button onClick={() => setRequest("Optimise ce script sans changer son comportement.")}>Optimiser</button><button onClick={() => setRequest("Analyse ce script et propose une version corrigée.")}>Diagnostiquer</button></div>
-          </section>
+      <section className="chatMain">
+        <header className="chatHeader">
+          <div className="modelName">
+            <div className="modelDot">✦</div>
+            <div><strong>Script AI</strong><span>Assistant Luau</span></div>
+          </div>
+          <div className="headerPill"><i /> Gemini</div>
+        </header>
 
-          <section className="panel history">
-            <div className="historyHead"><strong>Historique local</strong><span>{history.length}/15</span></div>
-            {history.length === 0 ? <div className="historyEmpty">Tes dernières générations apparaîtront ici.</div> :
-              history.slice(0, 5).map((item) => (
-                <button className="historyItem" key={item.id} onClick={() => restore(item)}>
-                  <span>{new Date(item.time).toLocaleTimeString("fr-FR", { hour: "2-digit", minute: "2-digit" })}</span>
-                  <strong>{item.request.slice(0, 56)}{item.request.length > 56 ? "…" : ""}</strong>
+        <div className="messages">
+          {!activeChat || activeChat.messages.length === 0 ? (
+            <div className="welcome">
+              <div className="welcomeIcon">✦</div>
+              <h1>Comment puis-je t’aider ?</h1>
+              <p>Donne-moi ton script et explique ce que tu veux modifier.</p>
+
+              <div className="suggestions">
+                <button onClick={() => { setCodeOpen(true); setPrompt("Corrige les erreurs de ce script sans supprimer ses fonctionnalités."); }}>
+                  <strong>Corriger un script</strong><span>Détecter et réparer les erreurs Luau.</span>
                 </button>
-              ))}
-          </section>
-        </section>
+                <button onClick={() => { setCodeOpen(true); setPrompt("Ajoute la fonctionnalité que je vais décrire en gardant le reste du script."); }}>
+                  <strong>Ajouter une fonction</strong><span>Faire évoluer ton code existant.</span>
+                </button>
+                <button onClick={() => { setCodeOpen(true); setPrompt("Optimise ce script sans changer son comportement."); }}>
+                  <strong>Optimiser</strong><span>Améliorer la structure du code.</span>
+                </button>
+                <button onClick={() => { setCodeOpen(true); setPrompt("Explique ce script puis propose une version plus propre."); }}>
+                  <strong>Comprendre le code</strong><span>Analyser puis proposer une meilleure version.</span>
+                </button>
+              </div>
+            </div>
+          ) : (
+            <div className="conversation">
+              {activeChat.messages.map((message) => (
+                <article key={message.id} className={message.role === "user" ? "message user" : "message assistant"}>
+                  <div className="messageAvatar">{message.role === "user" ? currentUser[0]?.toUpperCase() : "✦"}</div>
+                  <div className="messageBody">
+                    <div className="messageName">{message.role === "user" ? currentUser : "Script AI"}</div>
+                    <div className="messageText">{message.content}</div>
 
-        <section className="panel resultPanel">
-          <div className="panelHead">
-            <div><span className="green">03</span><div><strong>Code modifié</strong><small>{result ? resultLines + " lignes · prêt" : "En attente de Gemini"}</small></div></div>
-            <em className="gemini">GEMINI</em>
+                    {message.code && (
+                      <div className="codeResponse">
+                        <div className="codeResponseHead"><span>Luau</span><button onClick={() => copyCode(message.code)}>Copier</button></div>
+                        <pre>{message.code}</pre>
+                        <div className="codeResponseActions">
+                          <button onClick={() => applyCode(message.code)}>✓ Utiliser ce code</button>
+                        </div>
+                        {message.explanation && <div className="summary"><span>Résumé</span><p>{message.explanation}</p></div>}
+                      </div>
+                    )}
+                  </div>
+                </article>
+              ))}
+              {busy && (
+                <article className="message assistant">
+                  <div className="messageAvatar">✦</div>
+                  <div className="messageBody">
+                    <div className="messageName">Script AI</div>
+                    <div className="typing"><span /><span /><span /></div>
+                  </div>
+                </article>
+              )}
+            </div>
+          )}
+        </div>
+
+        <div className="composerArea">
+          {codeOpen && (
+            <div className="scriptDrawer">
+              <div className="drawerHead">
+                <div><strong>Script actuel</strong><span>{Math.max(1, script.split("\n").length)} lignes · Luau</span></div>
+                <button onClick={() => setCodeOpen(false)}>Fermer</button>
+              </div>
+              <textarea className="scriptInput" value={script} onChange={(e) => setScript(e.target.value)} spellCheck={false} />
+            </div>
+          )}
+
+          <div className="composer">
+            <button className="attach" onClick={() => setCodeOpen(!codeOpen)} title="Afficher le script">＋</button>
+            <textarea
+              value={prompt}
+              onChange={(e) => setPrompt(e.target.value)}
+              onKeyDown={(e) => {
+                if (e.key === "Enter" && !e.shiftKey) {
+                  e.preventDefault();
+                  if (!busy) sendPrompt();
+                }
+              }}
+              placeholder={codeOpen ? "Décris la modification à faire…" : "Message à Script AI…"}
+              rows={1}
+            />
+            <button className="send" onClick={sendPrompt} disabled={busy || !prompt.trim()}>↑</button>
           </div>
-          {result ? <>
-            <textarea className="code resultCode" value={result} onChange={(e) => setResult(e.target.value)} spellCheck={false} />
-            <div className="resultActions"><button className="use" onClick={useResult}>✓ Utiliser ce code</button><button className="copy" onClick={copy}>Copier</button></div>
-            {explanation && <div className="explanation"><span>RÉSUMÉ</span><p>{explanation}</p></div>}
-          </> : <div className="empty"><div>⌁</div><strong>Ton résultat apparaîtra ici.</strong><p>Gemini modifiera le script complet à partir de ta demande.</p></div>}
-        </section>
+
+          <div className="composerHint">Entrée pour envoyer · Maj + Entrée pour une nouvelle ligne</div>
+        </div>
+
+        <footer className="chatFooter">
+          <span>Script AI peut faire des erreurs. Vérifie toujours le code avant de l’utiliser.</span>
+          <span>{messageCount} message{messageCount > 1 ? "s" : ""}</span>
+        </footer>
+
+        {notice && <div className="toast">{notice}</div>}
       </section>
 
-      <footer className="footer">
-        <span>Brouillons et comptes enregistrés localement</span>
-        <span>{notice || "Prêt"}</span>
-        <button onClick={deleteAccount}>Supprimer le compte</button>
-      </footer>
+      <button className="deleteAccount" onClick={deleteAccount}>Supprimer le compte local</button>
     </main>
   );
 }
