@@ -1,23 +1,45 @@
 # Project Desk
 
-Un espace de travail collaboratif minimaliste, inspiré de Word/Notion, pour centraliser les pages, les tâches et les idées d’une équipe.
+Espace de travail collaboratif façon Word/Notion avec pages, tâches partagées et assistant Gemini.
 
 ## Fonctionnalités
 
-- Accès par mot de passe : `Weapons RNG`
-- Pseudo membre à l’entrée
-- Pages partagées entre les utilisateurs du déploiement
-- Éditeur de document simple
-- Création de pages
-- Création de pages avec l’aide de l’IA
-- Tâches partagées avec état terminé / à faire
-- Synchronisation automatique toutes les quelques secondes
-- Assistant IA pour structurer une page, proposer des idées et préparer des tâches
-- L’assistant fonctionne sans clé grâce à un mode local ; ajoutez `GEMINI_API_KEY` pour activer Gemini côté serveur.
+- Accès protégé à l’espace
+- Pseudo membre
+- Pages partagées
+- Éditeur de pages
+- Tâches partagées
+- Synchronisation automatique
+- Persistance Supabase
+- Assistant Gemini via la variable `IA`
+
+## Variables Vercel
+
+Dans **Project Settings → Environment Variables**, ajoute :
+
+```text
+IA=ta_cle_api_gemini
+URL=https://ton-projet.supabase.co
+KEY=ta_cle_secrete_supabase
+```
+
+Les variables sont lues uniquement côté serveur. La clé Supabase `KEY` doit être une clé serveur secrète et ne doit jamais être envoyée au navigateur.
+
+## Base Supabase
+
+Ouvre le **SQL Editor** de ton projet Supabase et exécute :
+
+`supabase/schema.sql`
+
+Il crée les tables `workspace_pages` et `workspace_tasks`, avec Row Level Security activé.
+
+## Gemini
+
+Le projet utilise le SDK officiel `@google/genai` côté serveur et la variable `IA` pour appeler Gemini.
 
 ## Développement
 
-Node.js 20.9+.
+Node.js 22+.
 
 `npm install`
 `npm run dev`
@@ -26,11 +48,3 @@ Node.js 20.9+.
 
 `npm run build`
 `npm start`
-
-## IA
-
-Le SDK officiel `@google/genai` est utilisé côté serveur quand `GEMINI_API_KEY` est disponible. Sans clé, un assistant local prend le relais.
-
-## Partage
-
-Le serveur garde un état partagé en mémoire entre les requêtes d’une même instance. Sur un environnement serverless, cet état peut être réinitialisé quand une nouvelle instance démarre ; une base de données est nécessaire pour une persistance multi-instance durable.
