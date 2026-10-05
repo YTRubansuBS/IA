@@ -1,66 +1,123 @@
 import { NextResponse } from "next/server";
 import { GoogleGenAI } from "@google/genai";
 
-const PASSWORD = "Weapons RNG";
+type EditResult = {
+  code: string;
+  explanation: string;
+};
+
+function parseResult(raw: string): EditResult {
+  const value = raw.trim();
+
+  try {
+    const parsed = JSON.parse(value) as Partial<EditResult>;
+    if (typeof parsed.code === "string" && parsed.code.trim()) {
+      return {
+        code: parsed.code,
+        explanation:
+          typeof parsed.explanation === "string"
+            ? parsed.explanation
+            : "Code modifié.",
+      };
+    }
+  } catch {}
+
+  return {
+    code: value,
+    explanation: "Code modifié.",
+  };
+}
 
 export async function POST(request: Request) {
-  if (request.headers.get("x-workspace-password") !== PASSWORD) {
-    return NextResponse.json({ error: "Unauthorized" }, { status: 401 });
-  }
-
   const body = await request.json().catch(() => null);
-  const prompt = typeof body?.prompt === "string" ? body.prompt.trim().slice(0, 6000) : "";
-  const pageTitle = typeof body?.pageTitle === "string" ? body.pageTitle.slice(0, 150) : "";
-  const pageContent = typeof body?.pageContent === "string" ? body.pageContent.slice(0, 15000) : "";
+
+  const prompt =
+    typeof body?.prompt === "string"
+      ? body.prompt.trim().slice(0, 8000)
+      : "";
+
+  const source =
+    typeof body?.source === "string"
+      ? body.source.slice(0, 100000)
+      : "";
+
+  const scriptName =
+    typeof body?.scriptName === "string"
+      ? body.scriptName.slice(0, 200)
+      : "Script Luau";
 
   if (!prompt) {
-    return NextResponse.json({ error: "Prompt required" }, { status: 400 });
+    return NextResponse.json(
+      { error: "Décris la modification à faire." },
+      { status: 400 }
+    );
+  }
+
+  if (!source.trim()) {
+    return NextResponse.json(
+      { error: "Colle un script avant de lancer la modification." },
+      { status: 400 }
+    );
   }
 
   const key = process.env.IA;
+
   if (!key) {
     return NextResponse.json(
-      { error: "Variable IA manquante. Ajoute IA dans les Environment Variables de Vercel." },
+      { error: "La variable IA est absente des Environment Variables." },
       { status: 500 }
     );
   }
 
   try {
-    const ai = new GoogleGenAI({ apiKey: key });
-    const response = await ai.models.generateContent({
+    const client = new GoogleGenAI({ apiKey: key });
+
+    const response = await client.models.generateContent({
       model: "gemini-3.8-flash",
       contents: [
-        {
-          role: "user",
-          parts: [
-            {
-              text:
-                "Tu es l'assistant IA d'un espace de travail collaboratif. Aide à créer, structurer et améliorer des pages de projet. Réponds en français, de façon concrète et directement réutilisable.\n\n" +
-                "Page actuelle : " +
-                pageTitle +
-                "\n\nContenu actuel :\n" +
-                pageContent +
-                "\n\nDemande :\n" +
-                prompt,
-            },
-          ],
-        },
-      ],
+        "Tu es un expert en Luau.",
+        "L'utilisateur donne un script existant et demande une modification.",
+        "Analyse le code existant puis applique uniquement la modification demandée.",
+        "Conserve les fonctions qui ne sont pas concernées.",
+        "Corrige les erreurs nécessaires pour que le nouveau code soit cohérent.",
+        "Réponds UNIQUEMENT avec un objet JSON contenant code et explanation.",
+        "code doit contenir le fichier Luau COMPLET après modification.",
+        "Ne mets pas de markdown dans code.",
+        "",
+        "Nom du script : " + scriptName,
+        "",
+        "CODE ACTUEL :",
+        source,
+        "",
+        "DEMANDE :",
+        prompt,
+      ].join("\n"),
       config: {
         systemInstruction:
-          "Tu aides une équipe à organiser un projet. Tu peux proposer des titres, structures, textes, idées, plans et tâches. Ne prétends jamais avoir effectué une modification que tu n'as pas réellement faite.",
-        maxOutputTokens: 1200,
+          "Tu produis du code Luau complet, cohérent et directement copiable.",
+        maxOutputTokens: 16000,
+        temperature: 0.15,
       },
     });
 
-    return NextResponse.json({
-      reply: response.text || "Gemini n’a renvoyé aucun texte.",
-      source: "gemini",
-    });
+    const result = parseResult(response.text || "");
+
+    if (!result.code.trim()) {
+      return NextResponse.json(
+        { error: "Aucun code n'a été généré." },
+        { status: 502 }
+      );
+    }
+
+    return NextResponse.json(result);
   } catch (error) {
-    console.error("[ai]", error);
+    console.error("[code-ai]", error);
+
     return NextResponse.json(
-      { error: "Impossible de contacter Gemini.", detail: error instanceof Error ? error.message : "Unknown error" },
+      {
+        error: "Impossible de contacter l'IA.",
+        detail: error instanceof Error ? error.message : "Erreur inconnue",
+      },
       { status: 502 }
     );
   }
