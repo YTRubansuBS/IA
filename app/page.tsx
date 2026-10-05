@@ -2,8 +2,9 @@
 
 import { FormEvent, useEffect, useMemo, useState } from "react";
 
-const WORKSPACE_PASSWORD = "Weapons RNG";
 const ACCOUNTS_KEY = "script-ai-accounts-v3";
+const APP_QUOTA_KEY = "script-ai-app-quota-v1";
+const APP_DAILY_QUOTA = 25;
 const SESSION_KEY = "script-ai-session-v3";
 const DRAFT_KEY = "script-ai-draft-v3:";
 const CHATS_KEY = "script-ai-chats-v3:";
@@ -63,6 +64,26 @@ function saveChats(user: string, chats: Chat[]) {
   localStorage.setItem(CHATS_KEY + user, JSON.stringify(chats.slice(0, 30)));
 }
 
+function getDailyQuotaUsed() {
+  const today = new Date().toISOString().slice(0, 10);
+  try {
+    const raw = localStorage.getItem(APP_QUOTA_KEY);
+    const value = raw ? JSON.parse(raw) : null;
+    if (value?.date !== today) {
+      localStorage.setItem(APP_QUOTA_KEY, JSON.stringify({ date: today, used: 0 }));
+      return 0;
+    }
+    return typeof value?.used === "number" ? Math.max(0, value.used) : 0;
+  } catch {
+    return 0;
+  }
+}
+
+function setDailyQuotaUsed(used: number) {
+  const date = new Date().toISOString().slice(0, 10);
+  localStorage.setItem(APP_QUOTA_KEY, JSON.stringify({ date, used }));
+}
+
 export default function Home() {
   const [ready, setReady] = useState(false);
 
@@ -70,7 +91,10 @@ export default function Home() {
   const [username, setUsername] = useState("");
   const [password, setPassword] = useState("");
   const [password2, setPassword2] = useState("");
+  const [accessPassword, setAccessPassword] = useState("");
   const [authError, setAuthError] = useState("");
+  const [quotaUsed, setQuotaUsed] = useState(0);
+  const [latestTokens, setLatestTokens] = useState<number | null>(null);
   const [accountTotal, setAccountTotal] = useState(0);
   const [currentUser, setCurrentUser] = useState("");
 
@@ -95,23 +119,10 @@ export default function Home() {
     setAccountTotal(list.length);
 
     if (session && list.some((account) => account.username === session)) {
-      setCurrentUser(session);
-
-      const savedChats = getChats(session);
-      setChats(savedChats);
-
-      const first = savedChats[0];
-      if (first) setActiveChatId(first.id);
-
-      try {
-        const raw = localStorage.getItem(DRAFT_KEY + session);
-        if (raw) {
-          const draft = JSON.parse(raw);
-          if (draft.script) setScript(draft.script);
-        }
-      } catch {}
+      setUsername(session);
     }
 
+    setQuotaUsed(getDailyQuotaUsed());
     setReady(true);
   }, []);
 
@@ -148,9 +159,36 @@ export default function Home() {
     );
   };
 
+  const verifyAccess = async () => {
+    setAuthError("");
+
+    try {
+      const response = await fetch("/api/access", {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({ password: accessPassword }),
+      });
+
+      const data = await response.json().catch(() => null);
+
+      if (!response.ok) {
+        setAuthError(data?.error || "Code d'accès incorrect.");
+        return false;
+      }
+
+      setAccessPassword("");
+      return true;
+    } catch {
+      setAuthError("Impossible de vérifier le code d'accès.");
+      return false;
+    }
+  };
+
   const login = async (event: FormEvent) => {
     event.preventDefault();
     setAuthError("");
+
+    if (!(await verifyAccess())) return;
 
     const found = getAccounts().find(
       (account) => account.username.toLowerCase() === username.trim().toLowerCase()
@@ -187,6 +225,8 @@ export default function Home() {
   const createAccount = async (event: FormEvent) => {
     event.preventDefault();
     setAuthError("");
+
+    if (!(await verifyAccess())) return;
 
     const name = username.trim();
     if (name.length < 3) {
@@ -228,6 +268,7 @@ export default function Home() {
   };
 
   const logout = () => {
+    void fetch("/api/access", { method: "DELETE" });
     localStorage.removeItem(SESSION_KEY);
     setCurrentUser("");
     setChats([]);
@@ -245,6 +286,7 @@ export default function Home() {
     localStorage.removeItem(SESSION_KEY);
     localStorage.removeItem(DRAFT_KEY + currentUser);
     localStorage.removeItem(CHATS_KEY + currentUser);
+    void fetch("/api/access", { method: "DELETE" });
 
     setAccountTotal(remaining.length);
     setCurrentUser("");
@@ -265,6 +307,17 @@ export default function Home() {
       setCodeOpen(true);
       return;
     }
+
+    const used = getDailyQuotaUsed();
+    if (used >= APP_DAILY_QUOTA) {
+      setQuotaUsed(used);
+      flash("Quota de protection atteint pour aujourd'hui.");
+      return;
+    }
+
+    const nextQuota = used + 1;
+    setDailyQuotaUsed(nextQuota);
+    setQuotaUsed(nextQuota);
 
     if (!activeChatId) {
       const chat: Chat = {
@@ -318,7 +371,6 @@ export default function Home() {
         method: "POST",
         headers: {
           "Content-Type": "application/json",
-          "x-workspace-password": WORKSPACE_PASSWORD,
         },
         body: JSON.stringify({
           prompt: cleanPrompt,
@@ -328,6 +380,10 @@ export default function Home() {
       });
 
       const data = await response.json();
+
+      if (typeof data?.usage?.totalTokens === "number") {
+        setLatestTokens(data.usage.totalTokens);
+      }
 
       if (!response.ok) {
         const errorText = [data.error, data.detail]
@@ -439,6 +495,11 @@ export default function Home() {
           </div>
 
           <section className="authCard">
+            <div className="accessBanner">
+              <div><strong>Accès privé</strong><span>Entre le code requis à chaque connexion ou création.</span></div>
+              <b>Fourchette</b>
+            </div>
+
             <div className="tabs">
               <button className={authMode === "login" ? "tab active" : "tab"} onClick={() => { setAuthMode("login"); setAuthError(""); }}>Connexion</button>
               <button className={authMode === "create" ? "tab active" : "tab"} onClick={() => { setAuthMode("create"); setAuthError(""); }}>Créer un compte</button>
@@ -451,7 +512,8 @@ export default function Home() {
             </div>
 
             <form className="authForm" onSubmit={authMode === "login" ? login : createAccount}>
-              <label>Pseudo<input value={username} onChange={(e) => setUsername(e.target.value)} placeholder="Ex. Ruben" autoComplete="username" autoFocus /></label>
+              <label>Code d’accès<input type="password" value={accessPassword} onChange={(e) => setAccessPassword(e.target.value)} placeholder="Code d’accès" autoComplete="off" autoFocus /></label>
+              <label>Pseudo<input value={username} onChange={(e) => setUsername(e.target.value)} placeholder="Ex. Ruben" autoComplete="username" /></label>
               <label>Mot de passe<input type="password" value={password} onChange={(e) => setPassword(e.target.value)} placeholder="••••••••" autoComplete={authMode === "login" ? "current-password" : "new-password"} /></label>
               {authMode === "create" && <label>Confirmer<input type="password" value={password2} onChange={(e) => setPassword2(e.target.value)} placeholder="••••••••" autoComplete="new-password" /></label>}
               <button className="authSubmit" type="submit">{authMode === "login" ? "Continuer →" : "Créer mon compte →"}</button>
@@ -504,7 +566,10 @@ export default function Home() {
             <div className="modelDot">✦</div>
             <div><strong>Script AI</strong><span>Assistant Luau</span></div>
           </div>
-          <div className="headerPill"><i /> Gemini</div>
+          <div className="headerRight">
+            <div className="quotaPill"><i /> Quota app&nbsp;: <b>{Math.max(0, APP_DAILY_QUOTA - quotaUsed)}</b>/{APP_DAILY_QUOTA}</div>
+            <div className="headerPill"><i /> Gemini{latestTokens !== null ? " · " + latestTokens.toLocaleString("fr-FR") + " tok." : ""}</div>
+          </div>
         </header>
 
         <div className="messages">
