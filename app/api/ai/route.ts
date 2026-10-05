@@ -50,6 +50,14 @@ function getExactError(error: unknown): { message: string; status: number; type:
 }
 
 export async function POST(request: Request) {
+  const cookie = request.headers.get("cookie") || "";
+  if (!/(^|;\s*)script_ai_access=1(?:;|$)/.test(cookie)) {
+    return NextResponse.json(
+      { error: "Accès refusé : entre le code Fourchette avant d'utiliser l'API.", errorType: "AccessRequired" },
+      { status: 401 }
+    );
+  }
+
   const body = await request.json().catch(() => null);
   const prompt = typeof body?.prompt === "string" ? body.prompt.trim().slice(0, 8000) : "";
   const source = typeof body?.source === "string" ? body.source.slice(0, 100000) : "";
@@ -105,7 +113,16 @@ export async function POST(request: Request) {
       return NextResponse.json({ error: "Aucun code n'a été généré.", errorType: "EmptyResponse" }, { status: 502 });
     }
 
-    return NextResponse.json(result);
+    const usage = response.usageMetadata;
+
+    return NextResponse.json({
+      ...result,
+      usage: {
+        promptTokens: usage?.promptTokenCount ?? null,
+        outputTokens: usage?.candidatesTokenCount ?? null,
+        totalTokens: usage?.totalTokenCount ?? null,
+      },
+    });
   } catch (error) {
     console.error("[code-ai] Gemini error:", error);
     const exact = getExactError(error);
