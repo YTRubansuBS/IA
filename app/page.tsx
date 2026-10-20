@@ -1,626 +1,260 @@
 "use client";
 
-import { FormEvent, useEffect, useMemo, useState } from "react";
+import { useEffect, useMemo, useState } from "react";
 
-const ACCOUNTS_KEY = "script-ai-accounts-v3";
-const SESSION_KEY = "script-ai-session-v3";
-const DRAFT_KEY = "script-ai-draft-v3:";
-const CHATS_KEY = "script-ai-chats-v3:";
-
-type Account = { username: string; passwordHash: string; createdAt: number };
-type Chat = {
+type Account = {
   id: string;
-  title: string;
-  createdAt: number;
-  updatedAt: number;
-  messages: Message[];
-};
-type Message = {
-  id: string;
-  role: "user" | "assistant";
-  content: string;
-  code?: string;
-  explanation?: string;
-  time: number;
+  username: string;
+  displayName: string;
+  avatar: string;
+  gameCount: number;
+  games: Game[];
+  error?: string;
 };
 
-const starter = [
-  'local Players = game:GetService("Players")',
-  "",
-  "Players.PlayerAdded:Connect(function(player)",
-  '    print("Bienvenue " .. player.Name)',
-  "end)",
-].join("\n");
+type Game = {
+  id: number;
+  placeId: number;
+  name: string;
+  description: string;
+  playing: number;
+  visits: number;
+  favorites: number;
+  likes: number;
+  dislikes: number;
+  created: string;
+  updated: string;
+  maxPlayers: number;
+  avatar: string;
+  stats?: Stats;
+};
 
-async function hash(value: string) {
-  const data = new TextEncoder().encode(value);
-  const buffer = await crypto.subtle.digest("SHA-256", data);
-  return Array.from(new Uint8Array(buffer))
-    .map((b) => b.toString(16).padStart(2, "0"))
-    .join("");
+type Series = { time: string; value: number };
+type Breakdown = { label: string; value: number };
+type Stats = {
+  dau: Series[];
+  mau: number | null;
+  playtimeHours: Series[];
+  avgPlaytime: Series[];
+  avgSession: Series[];
+  sessions: Series[];
+  revenue: Series[];
+  d1: Series[];
+  d7: Series[];
+  payingUsers: Series[];
+  payerCVR: Series[];
+  acquisition: {
+    source: string;
+    impressions: number;
+    clicks: number;
+    plays: number;
+    impressionCTR: number | null;
+    playRate: number | null;
+  }[];
+  platforms: Breakdown[];
+  countries: Breakdown[];
+  ages: Breakdown[];
+  newReturning: Breakdown[];
+  rfy: {
+    ptr: number | null;
+    bounce0to60: number | null;
+    bounce61to180: number | null;
+    d1Playtime: number | null;
+    d2to7Playtime: number | null;
+    d8to28Playtime: number | null;
+    d1PlayDays: number | null;
+    d2to7PlayDays: number | null;
+    d8to28PlayDays: number | null;
+    d1Coplay: number | null;
+    d2to7Coplay: number | null;
+    d8to28Coplay: number | null;
+    d1Qualified: number | null;
+    d2to7Qualified: number | null;
+    d8to28Qualified: number | null;
+    d1Robux: number | null;
+    d2to7Robux: number | null;
+    d8to28Robux: number | null;
+  };
+};
+
+const ACCOUNTS = ["3671739729", "4963417975"];
+const fmt = new Intl.NumberFormat("fr-FR");
+const pct = (v: number | null) => v == null ? "—" : `${(v * 100).toFixed(1)}%`;
+const num = (v: number | null | undefined) => v == null ? "—" : fmt.format(Math.round(v));
+const last = (s?: Series[]) => s?.length ? s[s.length - 1].value : null;
+const sum = (s?: Series[]) => s?.reduce((a, x) => a + x.value, 0) ?? 0;
+
+function Chart({ series, percent = false }: { series: Series[]; percent?: boolean }) {
+  if (!series?.length) return <div className="emptyChart">Pas encore de données</div>;
+  const max = Math.max(...series.map(x => x.value), 1);
+  const min = Math.min(...series.map(x => x.value), 0);
+  const range = Math.max(max - min, 1);
+  const points = series.map((p, i) => {
+    const x = series.length === 1 ? 50 : (i / (series.length - 1)) * 100;
+    const y = 94 - ((p.value - min) / range) * 78;
+    return `${x},${y}`;
+  }).join(" ");
+  return (
+    <div className="chartWrap">
+      <svg viewBox="0 0 100 100" preserveAspectRatio="none">
+        <line x1="0" y1="94" x2="100" y2="94" className="gridLine" />
+        <polyline points={points} fill="none" className="chartLine" />
+      </svg>
+      <div className="chartLabels"><span>{new Date(series[0].time).toLocaleDateString("fr-FR")}</span><span>{percent ? pct(last(series)) : num(last(series))}</span><span>{new Date(series[series.length - 1].time).toLocaleDateString("fr-FR")}</span></div>
+    </div>
+  );
 }
 
-function getAccounts(): Account[] {
-  try {
-    const raw = localStorage.getItem(ACCOUNTS_KEY);
-    return raw ? JSON.parse(raw) : [];
-  } catch {
-    return [];
-  }
+function Bars({ data, percent = false }: { data: Breakdown[]; percent?: boolean }) {
+  if (!data?.length) return <div className="emptyChart">Pas encore de données</div>;
+  const max = Math.max(...data.map(x => x.value), 1);
+  return <div className="bars">{data.slice(0, 12).map(x => (
+    <div className="barRow" key={x.label}><div className="barLabel"><span>{x.label}</span><b>{percent ? pct(x.value) : num(x.value)}</b></div><div className="barTrack"><i style={{ width: `${Math.max(2, (x.value / max) * 100)}%` }} /></div></div>
+  ))}</div>;
 }
 
-function getChats(user: string): Chat[] {
-  try {
-    const raw = localStorage.getItem(CHATS_KEY + user);
-    return raw ? JSON.parse(raw) : [];
-  } catch {
-    return [];
-  }
-}
-
-function saveChats(user: string, chats: Chat[]) {
-  localStorage.setItem(CHATS_KEY + user, JSON.stringify(chats.slice(0, 30)));
+function MetricCard({ label, value, sub }: { label: string; value: string; sub?: string }) {
+  return <div className="metric"><span>{label}</span><strong>{value}</strong>{sub && <small>{sub}</small>}</div>;
 }
 
 export default function Home() {
-  const [ready, setReady] = useState(false);
+  const [accounts, setAccounts] = useState<Account[]>([]);
+  const [selectedId, setSelectedId] = useState<string | null>(null);
+  const [selectedGame, setSelectedGame] = useState<Game | null>(null);
+  const [loading, setLoading] = useState(true);
+  const [gameLoading, setGameLoading] = useState(false);
+  const [days, setDays] = useState(30);
+  const [search, setSearch] = useState("");
+  const [error, setError] = useState("");
 
-  const [authMode, setAuthMode] = useState<"login" | "create">("login");
-  const [username, setUsername] = useState("");
-  const [password, setPassword] = useState("");
-  const [password2, setPassword2] = useState("");
-  const [accessPassword, setAccessPassword] = useState("");
-  const [authError, setAuthError] = useState("");
-  const [accountTotal, setAccountTotal] = useState(0);
-  const [currentUser, setCurrentUser] = useState("");
+  const loadAccounts = async () => {
+    setLoading(true); setError("");
+    try {
+      const r = await fetch("/api/roblox/accounts", { cache: "no-store" });
+      const data = await r.json();
+      if (!r.ok) throw new Error(data.error || "Impossible de charger Roblox.");
+      setAccounts(data.accounts || []);
+      setSelectedId(data.accounts?.[0]?.id || ACCOUNTS[0]);
+    } catch (e) {
+      setError(e instanceof Error ? e.message : "Erreur inconnue.");
+    } finally { setLoading(false); }
+  };
 
-  const [script, setScript] = useState(starter);
-  const [prompt, setPrompt] = useState("");
-  const [chats, setChats] = useState<Chat[]>([]);
-  const [activeChatId, setActiveChatId] = useState("");
-  const [codeOpen, setCodeOpen] = useState(false);
-  const [busy, setBusy] = useState(false);
-  const [notice, setNotice] = useState("");
+  const loadGame = async (game: Game) => {
+    setSelectedGame(game); setGameLoading(true);
+    try {
+      const r = await fetch(`/api/roblox/game/${game.id}?days=${days}`, { cache: "no-store" });
+      const data = await r.json();
+      if (!r.ok) throw new Error(data.error || "Impossible de charger les analytics.");
+      setSelectedGame({ ...game, stats: data.stats });
+    } catch (e) {
+      setError(e instanceof Error ? e.message : "Erreur analytics.");
+    } finally { setGameLoading(false); }
+  };
 
-  const activeChat = useMemo(
-    () => chats.find((chat) => chat.id === activeChatId) ?? null,
-    [chats, activeChatId]
-  );
-
-  const messageCount = activeChat?.messages.length ?? 0;
-
+  useEffect(() => { loadAccounts(); }, []);
   useEffect(() => {
-    const list = getAccounts();
-    const session = localStorage.getItem(SESSION_KEY) || "";
-    setAccountTotal(list.length);
-
-    if (session && list.some((account) => account.username === session)) {
-      setUsername(session);
+    if (selectedGame) {
+      const base = selectedGame;
+      void loadGame(base);
     }
+  }, [days]);
 
-    setReady(true);
-  }, []);
-
-  useEffect(() => {
-    if (!currentUser) return;
-    localStorage.setItem(DRAFT_KEY + currentUser, JSON.stringify({ script }));
-    saveChats(currentUser, chats);
-  }, [currentUser, script, chats]);
-
-  const flash = (text: string) => {
-    setNotice(text);
-    window.setTimeout(() => setNotice(""), 2200);
-  };
-
-  const startChat = () => {
-    const chat: Chat = {
-      id: crypto.randomUUID(),
-      title: "Nouvelle conversation",
-      createdAt: Date.now(),
-      updatedAt: Date.now(),
-      messages: [],
-    };
-
-    const next = [chat, ...chats];
-    setChats(next);
-    setActiveChatId(chat.id);
-    setPrompt("");
-    flash("Nouveau chat.");
-  };
-
-  const updateActiveChat = (updater: (chat: Chat) => Chat) => {
-    setChats((current) =>
-      current.map((chat) => (chat.id === activeChatId ? updater(chat) : chat))
-    );
-  };
-
-  const verifyAccess = async () => {
-    setAuthError("");
-
-    try {
-      const response = await fetch("/api/access", {
-        method: "POST",
-        headers: { "Content-Type": "application/json" },
-        body: JSON.stringify({ password: accessPassword }),
-      });
-
-      const data = await response.json().catch(() => null);
-
-      if (!response.ok) {
-        setAuthError(data?.error || "Code d'accès incorrect.");
-        return false;
-      }
-
-      setAccessPassword("");
-      return true;
-    } catch {
-      setAuthError("Impossible de vérifier le code d'accès.");
-      return false;
-    }
-  };
-
-  const login = async (event: FormEvent) => {
-    event.preventDefault();
-    setAuthError("");
-
-    if (!(await verifyAccess())) return;
-
-    const found = getAccounts().find(
-      (account) => account.username.toLowerCase() === username.trim().toLowerCase()
-    );
-
-    if (!found) {
-      setAuthError("Ce compte n’existe pas sur cet appareil.");
-      return;
-    }
-
-    if ((await hash(password)) !== found.passwordHash) {
-      setAuthError("Mot de passe incorrect.");
-      return;
-    }
-
-    localStorage.setItem(SESSION_KEY, found.username);
-    setCurrentUser(found.username);
-
-    const savedChats = getChats(found.username);
-    setChats(savedChats);
-    setActiveChatId(savedChats[0]?.id || "");
-
-    try {
-      const raw = localStorage.getItem(DRAFT_KEY + found.username);
-      const draft = raw ? JSON.parse(raw) : null;
-      setScript(draft?.script || starter);
-    } catch {
-      setScript(starter);
-    }
-
-    setPassword("");
-  };
-
-  const createAccount = async (event: FormEvent) => {
-    event.preventDefault();
-    setAuthError("");
-
-    if (!(await verifyAccess())) return;
-
-    const name = username.trim();
-    if (name.length < 3) {
-      setAuthError("Le pseudo doit contenir au moins 3 caractères.");
-      return;
-    }
-    if (password.length < 4) {
-      setAuthError("Le mot de passe doit contenir au moins 4 caractères.");
-      return;
-    }
-    if (password !== password2) {
-      setAuthError("Les mots de passe ne correspondent pas.");
-      return;
-    }
-
-    const existing = getAccounts();
-    if (existing.some((account) => account.username.toLowerCase() === name.toLowerCase())) {
-      setAuthError("Ce pseudo existe déjà sur cet appareil.");
-      return;
-    }
-
-    const next = existing.concat({
-      username: name,
-      passwordHash: await hash(password),
-      createdAt: Date.now(),
-    });
-
-    localStorage.setItem(ACCOUNTS_KEY, JSON.stringify(next));
-    localStorage.setItem(SESSION_KEY, name);
-
-    setAccountTotal(next.length);
-    setCurrentUser(name);
-    setChats([]);
-    setActiveChatId("");
-    setScript(starter);
-    setPrompt("");
-    setPassword("");
-    setPassword2("");
-  };
-
-  const logout = () => {
-    void fetch("/api/access", { method: "DELETE" });
-    localStorage.removeItem(SESSION_KEY);
-    setCurrentUser("");
-    setChats([]);
-    setActiveChatId("");
-  };
-
-  const deleteAccount = () => {
-    if (!currentUser) return;
-
-    const remaining = getAccounts().filter(
-      (account) => account.username !== currentUser
-    );
-
-    localStorage.setItem(ACCOUNTS_KEY, JSON.stringify(remaining));
-    localStorage.removeItem(SESSION_KEY);
-    localStorage.removeItem(DRAFT_KEY + currentUser);
-    localStorage.removeItem(CHATS_KEY + currentUser);
-    void fetch("/api/access", { method: "DELETE" });
-
-    setAccountTotal(remaining.length);
-    setCurrentUser("");
-    setChats([]);
-    setActiveChatId("");
-  };
-
-  const sendPrompt = async () => {
-    const cleanPrompt = prompt.trim();
-
-    if (!cleanPrompt) {
-      flash("Écris une demande.");
-      return;
-    }
-
-    if (!script.trim()) {
-      flash("Ajoute ton script avant de demander une modification.");
-      setCodeOpen(true);
-      return;
-    }
-
-    if (!activeChatId) {
-      const chat: Chat = {
-        id: crypto.randomUUID(),
-        title: cleanPrompt.slice(0, 42),
-        createdAt: Date.now(),
-        updatedAt: Date.now(),
-        messages: [],
-      };
-      setChats([chat, ...chats]);
-      setActiveChatId(chat.id);
-    }
-
-    const userMessage: Message = {
-      id: crypto.randomUUID(),
-      role: "user",
-      content: cleanPrompt,
-      time: Date.now(),
-    };
-
-    const targetChat = activeChat ?? {
-      id: activeChatId,
-      title: cleanPrompt.slice(0, 42),
-      createdAt: Date.now(),
-      updatedAt: Date.now(),
-      messages: [],
-    };
-
-    const withUser = {
-      ...targetChat,
-      title:
-        targetChat.title === "Nouvelle conversation"
-          ? cleanPrompt.slice(0, 42)
-          : targetChat.title,
-      updatedAt: Date.now(),
-      messages: targetChat.messages.concat(userMessage),
-    };
-
-    setChats((current) => {
-      const exists = current.some((chat) => chat.id === withUser.id);
-      return exists
-        ? current.map((chat) => (chat.id === withUser.id ? withUser : chat))
-        : [withUser, ...current];
-    });
-
-    setPrompt("");
-    setBusy(true);
-
-    try {
-      const response = await fetch("/api/ai", {
-        method: "POST",
-        headers: {
-          "Content-Type": "application/json",
-        },
-        body: JSON.stringify({
-          prompt: cleanPrompt,
-          source: script,
-          scriptName: "Script Luau",
-        }),
-      });
-
-      const data = await response.json();
-
-      if (!response.ok) {
-        const errorText = [data.error, data.detail]
-          .filter(Boolean)
-          .join(" — ");
-
-        const errorMessage: Message = {
-          id: crypto.randomUUID(),
-          role: "assistant",
-          content: errorText || "Gemini a renvoyé une erreur.",
-          time: Date.now(),
-        };
-
-        setChats((current) =>
-          current.map((chat) =>
-            chat.id === withUser.id
-              ? { ...withUser, updatedAt: Date.now(), messages: withUser.messages.concat(errorMessage) }
-              : chat
-          )
-        );
-
-        return;
-      }
-
-      const assistantMessage: Message = {
-        id: crypto.randomUUID(),
-        role: "assistant",
-        content: "Voici la version modifiée de ton script.",
-        code: typeof data.code === "string" ? data.code : "",
-        explanation:
-          typeof data.explanation === "string"
-            ? data.explanation
-            : "Modification générée par Gemini.",
-        time: Date.now(),
-      };
-
-      setChats((current) =>
-        current.map((chat) =>
-          chat.id === withUser.id
-            ? {
-                ...withUser,
-                updatedAt: Date.now(),
-                messages: withUser.messages.concat(assistantMessage),
-              }
-            : chat
-        )
-      );
-
-      flash("Gemini a répondu.");
-    } catch (error) {
-      const errorMessage: Message = {
-        id: crypto.randomUUID(),
-        role: "assistant",
-        content:
-          error instanceof Error ? error.message : "Erreur de connexion à Gemini.",
-        time: Date.now(),
-      };
-
-      setChats((current) =>
-        current.map((chat) =>
-          chat.id === withUser.id
-            ? { ...withUser, updatedAt: Date.now(), messages: withUser.messages.concat(errorMessage) }
-            : chat
-        )
-      );
-    } finally {
-      setBusy(false);
-    }
-  };
-
-  const applyCode = (code?: string) => {
-    if (!code) return;
-    setScript(code);
-    setCodeOpen(true);
-    flash("Le code de Gemini est maintenant dans ton script.");
-  };
-
-  const copyCode = async (code?: string) => {
-    if (!code) return;
-    await navigator.clipboard.writeText(code);
-    flash("Code copié.");
-  };
-
-  if (!ready) {
-    return <main className="boot"><div>✦</div></main>;
-  }
-
-  if (!currentUser) {
-    return (
-      <main className="authScreen">
-        <div className="authGlow glowOne" />
-        <div className="authGlow glowTwo" />
-
-        <section className="authLayout">
-          <div className="authIntro">
-            <div className="brandIcon">✦</div>
-            <div className="eyebrow">SCRIPT AI</div>
-            <h1>Ton assistant<br /><span>pour coder.</span></h1>
-            <p>
-              Une interface inspirée de ChatGPT, conçue pour travailler avec tes
-              scripts Luau : tu donnes le code et tu expliques ce que tu veux changer.
-            </p>
-
-            <div className="introStats">
-              <span><b>01</b> Analyse</span>
-              <span><b>02</b> Modification</span>
-              <span><b>03</b> Code complet</span>
-            </div>
-          </div>
-
-          <section className="authCard">
-            <div className="tabs">
-              <button className={authMode === "login" ? "tab active" : "tab"} onClick={() => { setAuthMode("login"); setAuthError(""); }}>Connexion</button>
-              <button className={authMode === "create" ? "tab active" : "tab"} onClick={() => { setAuthMode("create"); setAuthError(""); }}>Créer un compte</button>
-            </div>
-
-            <div className="authCopy">
-              <span>{authMode === "login" ? "BON RETOUR" : "NOUVEAU COMPTE"}</span>
-              <h2>{authMode === "login" ? "Ouvre ton espace." : "Crée ton espace local."}</h2>
-              <p>Ton compte, ton brouillon et ton historique restent dans ce navigateur.</p>
-            </div>
-
-            <form className="authForm" onSubmit={authMode === "login" ? login : createAccount}>
-              <label>Code d’accès<input type="password" value={accessPassword} onChange={(e) => setAccessPassword(e.target.value)} placeholder="Code d’accès" autoComplete="off" autoFocus /></label>
-              <label>Pseudo<input value={username} onChange={(e) => setUsername(e.target.value)} placeholder="Ex. Ruben" autoComplete="username" /></label>
-              <label>Mot de passe<input type="password" value={password} onChange={(e) => setPassword(e.target.value)} placeholder="••••••••" autoComplete={authMode === "login" ? "current-password" : "new-password"} /></label>
-              {authMode === "create" && <label>Confirmer<input type="password" value={password2} onChange={(e) => setPassword2(e.target.value)} placeholder="••••••••" autoComplete="new-password" /></label>}
-              <button className="authSubmit" type="submit">{authMode === "login" ? "Continuer →" : "Créer mon compte →"}</button>
-            </form>
-
-            {authError && <div className="authError">{authError}</div>}
-            <div className="localInfo"><span>●</span>{accountTotal} compte{accountTotal > 1 ? "s" : ""} local{accountTotal > 1 ? "aux" : ""}</div>
-          </section>
-        </section>
-      </main>
-    );
-  }
+  const account = accounts.find(a => a.id === selectedId) || null;
+  const games = useMemo(() => (account?.games || []).filter(g => g.name.toLowerCase().includes(search.toLowerCase())), [account, search]);
+  const allGames = accounts.flatMap(a => a.games);
+  const totalVisits = account ? account.games.reduce((a, g) => a + g.visits, 0) : 0;
+  const totalPlaying = account ? account.games.reduce((a, g) => a + g.playing, 0) : 0;
 
   return (
-    <main className="chatApp">
-      <aside className="sidebar">
-        <div className="sideTop">
-          <div className="sideBrand"><div className="miniLogo">✦</div><strong>Script AI</strong></div>
-          <button className="newChat" onClick={startChat}><span>＋</span> Nouveau chat</button>
-        </div>
+    <main className="app">
+      <header className="topbar">
+        <div className="brand"><div className="brandMark">R</div><div><strong>ROBLOX ANALYTICS</strong><span>Creator dashboard</span></div></div>
+        <div className="topActions"><button onClick={loadAccounts}>↻ Actualiser</button><span className="live"><i /> Données Roblox</span></div>
+      </header>
 
-        <div className="sideSectionLabel">Conversations</div>
-        <div className="chatList">
-          {chats.length === 0 ? (
-            <div className="noChats">Aucune conversation</div>
-          ) : chats.map((chat) => (
-            <button
-              key={chat.id}
-              className={chat.id === activeChatId ? "chatItem active" : "chatItem"}
-              onClick={() => setActiveChatId(chat.id)}
-            >
-              <span>◌</span>
-              <span>{chat.title}</span>
-            </button>
-          ))}
-        </div>
+      <div className="layout">
+        <aside className="accounts">
+          <div className="sideTitle">COMPTES ROBLOX</div>
+          <p className="sideHint">Les comptes suivis sont fixes.</p>
+          {ACCOUNTS.map(id => {
+            const a = accounts.find(x => x.id === id);
+            return <button className={selectedId === id ? "account active" : "account"} key={id} onClick={() => { setSelectedId(id); setSelectedGame(null); }}>
+              {a?.avatar ? <img src={a.avatar} /> : <div className="avatarPlaceholder">R</div>}
+              <div><strong>{a?.displayName || a?.username || `User ${id}`}</strong><span>@{a?.username || id}</span><small>ID {id}</small></div>
+            </button>;
+          })}
+          <div className="sideBottom"><span>Jeux trouvés</span><b>{account?.gameCount ?? "—"}</b></div>
+        </aside>
 
-        <div className="sideBottom">
-          <div className="sideProfile">
-            <div className="avatar">{currentUser[0]?.toUpperCase()}</div>
-            <div><strong>{currentUser}</strong><span>Compte local</span></div>
-          </div>
-          <button onClick={logout}>↪ Déconnexion</button>
-        </div>
-      </aside>
-
-      <section className="chatMain">
-        <header className="chatHeader">
-          <div className="modelName">
-            <div className="modelDot">✦</div>
-            <div><strong>Script AI</strong><span>Assistant Luau</span></div>
-          </div>
-          <div className="headerPill"><i /> Gemini</div>
-        </header>
-
-        <div className="messages">
-          {!activeChat || activeChat.messages.length === 0 ? (
-            <div className="welcome">
-              <div className="welcomeIcon">✦</div>
-              <h1>Comment puis-je t’aider ?</h1>
-              <p>Donne-moi ton script et explique ce que tu veux modifier.</p>
-
-              <div className="suggestions">
-                <button onClick={() => { setCodeOpen(true); setPrompt("Corrige les erreurs de ce script sans supprimer ses fonctionnalités."); }}>
-                  <strong>Corriger un script</strong><span>Détecter et réparer les erreurs Luau.</span>
-                </button>
-                <button onClick={() => { setCodeOpen(true); setPrompt("Ajoute la fonctionnalité que je vais décrire en gardant le reste du script."); }}>
-                  <strong>Ajouter une fonction</strong><span>Faire évoluer ton code existant.</span>
-                </button>
-                <button onClick={() => { setCodeOpen(true); setPrompt("Optimise ce script sans changer son comportement."); }}>
-                  <strong>Optimiser</strong><span>Améliorer la structure du code.</span>
-                </button>
-                <button onClick={() => { setCodeOpen(true); setPrompt("Explique ce script puis propose une version plus propre."); }}>
-                  <strong>Comprendre le code</strong><span>Analyser puis proposer une meilleure version.</span>
-                </button>
+        <section className="content">
+          {error && <div className="errorBanner">⚠ {error}<button onClick={() => setError("")}>×</button></div>}
+          {loading ? <div className="loading"><div className="spinner" />Chargement des comptes et des jeux Roblox…</div> : !account ? <div className="loading">Aucun compte chargé.</div> : (
+            <>
+              <div className="hero">
+                <div><span className="eyebrow">COMPTE SÉLECTIONNÉ</span><h1>{account.displayName}</h1><p>@{account.username} · User ID {account.id}</p></div>
+                <div className="heroNumbers"><div><b>{num(account.gameCount)}</b><span>expériences</span></div><div><b>{num(totalPlaying)}</b><span>joueurs maintenant</span></div><div><b>{num(totalVisits)}</b><span>visites cumulées</span></div></div>
               </div>
-            </div>
-          ) : (
-            <div className="conversation">
-              {activeChat.messages.map((message) => (
-                <article key={message.id} className={message.role === "user" ? "message user" : "message assistant"}>
-                  <div className="messageAvatar">{message.role === "user" ? currentUser[0]?.toUpperCase() : "✦"}</div>
-                  <div className="messageBody">
-                    <div className="messageName">{message.role === "user" ? currentUser : "Script AI"}</div>
-                    <div className="messageText">{message.content}</div>
 
-                    {message.code && (
-                      <div className="codeResponse">
-                        <div className="codeResponseHead"><span>Luau</span><button onClick={() => copyCode(message.code)}>Copier</button></div>
-                        <pre>{message.code}</pre>
-                        <div className="codeResponseActions">
-                          <button onClick={() => applyCode(message.code)}>✓ Utiliser ce code</button>
-                        </div>
-                        {message.explanation && <div className="summary"><span>Résumé</span><p>{message.explanation}</p></div>}
+              <div className="toolbar"><div className="search"><span>⌕</span><input value={search} onChange={e => setSearch(e.target.value)} placeholder="Rechercher un jeu…" /></div><div className="range">{[7,30,90,365].map(d => <button className={days === d ? "active" : ""} key={d} onClick={() => setDays(d)}>{d === 365 ? "1 an" : `${d}j`}</button>)}</div></div>
+
+              <div className="gameGrid">
+                {games.map(g => <button className={selectedGame?.id === g.id ? "gameCard selected" : "gameCard"} key={g.id} onClick={() => loadGame(g)}>
+                  {g.avatar ? <img src={g.avatar} /> : <div className="gameImg" />}
+                  <div className="gameInfo"><strong>{g.name}</strong><span>{num(g.playing)} joueurs · {num(g.visits)} visites</span><small>Mis à jour {new Date(g.updated).toLocaleDateString("fr-FR")}</small></div>
+                </button>)}
+              </div>
+
+              {selectedGame && (
+                <section className="dashboard">
+                  <div className="dashHead"><div><span className="eyebrow">ANALYTICS</span><h2>{selectedGame.name}</h2><p>Universe ID {selectedGame.id} · Place ID {selectedGame.placeId}</p></div><a href={`https://www.roblox.com/games/${selectedGame.placeId}`} target="_blank" rel="noreferrer">Ouvrir sur Roblox ↗</a></div>
+                  {gameLoading && <div className="thinLoading"><div className="spinner small" /> Récupération des métriques…</div>}
+                  {!selectedGame.stats ? <div className="apiNotice"><b>Analytics non disponibles.</b><span>Les informations publiques du jeu sont visibles. Pour les analytics Creator, ajoute une clé Roblox Open Cloud avec <code>universe.analytics:read</code>.</span></div> : (
+                    <>
+                      <div className="metrics">
+                        <MetricCard label="DAU" value={num(last(selectedGame.stats.dau))} sub="dernier jour" />
+                        <MetricCard label="Temps de jeu" value={`${(last(selectedGame.stats.playtimeHours) ?? 0).toFixed(1)} h`} sub="dernier jour" />
+                        <MetricCard label="Session moyenne" value={`${(last(selectedGame.stats.avgSession) ?? 0).toFixed(1)} min`} sub="dernier jour" />
+                        <MetricCard label="Rétention D1" value={pct(last(selectedGame.stats.d1))} sub="dernier jour" />
+                        <MetricCard label="Rétention D7" value={pct(last(selectedGame.stats.d7))} sub="dernier jour" />
+                        <MetricCard label="Revenu" value={`${num(last(selectedGame.stats.revenue))} R$`} sub="dernier jour" />
                       </div>
-                    )}
-                  </div>
-                </article>
-              ))}
-              {busy && (
-                <article className="message assistant">
-                  <div className="messageAvatar">✦</div>
-                  <div className="messageBody">
-                    <div className="messageName">Script AI</div>
-                    <div className="typing"><span /><span /><span /></div>
-                  </div>
-                </article>
+
+                      <div className="sectionGrid">
+                        <article className="panel wide"><div className="panelHead"><div><h3>Utilisateurs actifs</h3><span>DAU sur la période</span></div></div><Chart series={selectedGame.stats.dau} /></article>
+                        <article className="panel"><div className="panelHead"><div><h3>Temps de jeu</h3><span>Total en heures</span></div></div><Chart series={selectedGame.stats.playtimeHours} /></article>
+                        <article className="panel"><div className="panelHead"><div><h3>Sessions</h3><span>Nombre de visites</span></div></div><Chart series={selectedGame.stats.sessions} /></article>
+                        <article className="panel"><div className="panelHead"><div><h3>Rétention</h3><span>D1 / D7</span></div></div><Chart series={selectedGame.stats.d1} percent /></article>
+                        <article className="panel"><div className="panelHead"><div><h3>Revenu</h3><span>Robux</span></div></div><Chart series={selectedGame.stats.revenue} /></article>
+                      </div>
+
+                      <div className="sectionGrid">
+                        <article className="panel"><div className="panelHead"><div><h3>Plateformes</h3><span>DAU par appareil</span></div></div><Bars data={selectedGame.stats.platforms} /></article>
+                        <article className="panel"><div className="panelHead"><div><h3>Pays</h3><span>DAU par pays</span></div></div><Bars data={selectedGame.stats.countries} /></article>
+                        <article className="panel"><div className="panelHead"><div><h3>Âges</h3><span>DAU par groupe d'âge</span></div></div><Bars data={selectedGame.stats.ages} /></article>
+                        <article className="panel"><div className="panelHead"><div><h3>Nouveaux / retour</h3><span>DAU</span></div></div><Bars data={selectedGame.stats.newReturning} /></article>
+                      </div>
+
+                      <article className="panel acquisition"><div className="panelHead"><div><h3>Acquisition & découverte</h3><span>Impressions, clics, jeux et conversion par source</span></div></div>
+                        <div className="table"><div className="tr th"><span>Source</span><span>Impressions</span><span>Clics</span><span>Jeux</span><span>CTR</span><span>Play rate</span></div>
+                        {selectedGame.stats.acquisition.map(a => <div className="tr" key={a.source}><span>{a.source}</span><span>{num(a.impressions)}</span><span>{num(a.clicks)}</span><span>{num(a.plays)}</span><span>{pct(a.impressionCTR)}</span><span>{pct(a.playRate)}</span></div>)}</div>
+                      </article>
+
+                      <article className="panel"><div className="panelHead"><div><h3>Signaux Recommended For You</h3><span>Les signaux de découverte Home exposés par Roblox</span></div></div>
+                        <div className="signalGrid">
+                          {Object.entries(selectedGame.stats.rfy).map(([k,v]) => <div className="signal" key={k}><span>{k.replace(/([A-Z])/g," $1")}</span><b>{typeof v === "number" ? (k.toLowerCase().includes("ptr") || k.toLowerCase().includes("bounce") ? pct(v) : v.toFixed(2)) : "—"}</b></div>)}
+                        </div>
+                      </article>
+                    </>
+                  )}
+                </section>
               )}
-            </div>
+
+              {!games.length && <div className="empty">Aucun jeu ne correspond à ta recherche.</div>}
+            </>
           )}
-        </div>
-
-        <div className="composerArea">
-          {codeOpen && (
-            <div className="scriptDrawer">
-              <div className="drawerHead">
-                <div><strong>Script actuel</strong><span>{Math.max(1, script.split("\n").length)} lignes · Luau</span></div>
-                <button onClick={() => setCodeOpen(false)}>Fermer</button>
-              </div>
-              <textarea className="scriptInput" value={script} onChange={(e) => setScript(e.target.value)} spellCheck={false} />
-            </div>
-          )}
-
-          <div className="composer">
-            <button className="attach" onClick={() => setCodeOpen(!codeOpen)} title="Afficher le script">＋</button>
-            <textarea
-              value={prompt}
-              onChange={(e) => setPrompt(e.target.value)}
-              onKeyDown={(e) => {
-                if (e.key === "Enter" && !e.shiftKey) {
-                  e.preventDefault();
-                  if (!busy) sendPrompt();
-                }
-              }}
-              placeholder={codeOpen ? "Décris la modification à faire…" : "Message à Script AI…"}
-              rows={1}
-            />
-            <button className="send" onClick={sendPrompt} disabled={busy || !prompt.trim()}>↑</button>
-          </div>
-
-          <div className="composerHint">Entrée pour envoyer · Maj + Entrée pour une nouvelle ligne</div>
-        </div>
-
-        <footer className="chatFooter">
-          <span>Script AI peut faire des erreurs. Vérifie toujours le code avant de l’utiliser.</span>
-          <span>{messageCount} message{messageCount > 1 ? "s" : ""}</span>
-        </footer>
-
-        {notice && <div className="toast">{notice}</div>}
-      </section>
-
-      <button className="deleteAccount" onClick={deleteAccount}>Supprimer le compte local</button>
+        </section>
+      </div>
     </main>
   );
 }
