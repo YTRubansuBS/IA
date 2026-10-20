@@ -1,50 +1,52 @@
-# Project Desk
+# Roblox Analytics
 
-Espace de travail collaboratif façon Word/Notion avec pages, tâches partagées et assistant Gemini.
+Tableau de bord Next.js pour suivre les expériences Roblox de deux comptes fixes :
 
-## Fonctionnalités
+- 3671739729
+- 4963417975
 
-- Accès protégé à l’espace
-- Pseudo membre
-- Pages partagées
-- Éditeur de pages
-- Tâches partagées
-- Synchronisation automatique
-- Persistance Supabase
-- Assistant Gemini via la variable `IA`
+## Ce que le tableau de bord affiche
 
-## Variables Vercel
+- Toutes les expériences publiques trouvées pour chaque compte
+- Joueurs actuellement en jeu, visites, favoris, likes/dislikes, dates et IDs
+- DAU, MAU, sessions et temps de jeu
+- Temps de session et temps de jeu moyen
+- Rétention D1 / D7
+- Revenus, utilisateurs payants et conversion payeur
+- Acquisition : impressions, clics, jeux, CTR et play rate par source
+- Sources comme Home, Recherche, Amis, Charts, publicités, téléportation, etc.
+- Répartition par plateforme, pays, groupe d'âge et nouveaux/anciens utilisateurs
+- Signaux Recommended For You : play-through, bounce, play days, playtime, co-play, qualified sessions et Robux spend
+- Périodes de 7, 30, 90 et 365 jours
 
-Dans **Project Settings → Environment Variables**, ajoute :
+## Configuration Roblox
+
+Les informations publiques des jeux fonctionnent sans clé.
+
+Pour les Creator Analytics, ajoute une clé Roblox Open Cloud côté serveur dans Vercel :
 
 ```text
-IA=ta_cle_api_gemini
-URL=https://ton-projet.supabase.co
-KEY=ta_cle_secrete_supabase
+ROBLOX_API_KEY
 ```
 
-Les variables sont lues uniquement côté serveur. La clé Supabase `KEY` doit être une clé serveur secrète et ne doit jamais être envoyée au navigateur.
+ou, pour séparer les deux comptes :
 
-## Base Supabase
+```text
+ROBLOX_API_KEY_3671739729
+ROBLOX_API_KEY_4963417975
+```
 
-Ouvre le **SQL Editor** de ton projet Supabase et exécute :
+La clé doit avoir l'autorisation `universe.analytics:read` pour les expériences concernées. Ne mets jamais la clé dans `NEXT_PUBLIC_*` ni dans le navigateur.
 
-`supabase/schema.sql`
+## Limite importante
 
-Il crée les tables `workspace_pages` et `workspace_tasks`, avec Row Level Security activé.
-
-## Gemini
-
-Le projet utilise le SDK officiel `@google/genai` côté serveur et la variable `IA` pour appeler Gemini.
+Creator Analytics fournit principalement des données agrégées. Le tableau de bord n'affiche donc pas la liste nominative de chaque joueur avec son temps individuel : Roblox ne fournit pas cette donnée individuelle via l'Analytics Query API standard.
 
 ## Développement
 
 Node.js 22+.
 
-`npm install`
-`npm run dev`
-
-## Production
-
-`npm run build`
-`npm start`
+```
+npm install
+npm run dev
+```
