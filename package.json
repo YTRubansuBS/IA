@@ -1,5 +1,5 @@
 {
-  "name": "project-workspace",
+  "name": "roblox-creator-analytics",
   "version": "1.0.0",
   "private": true,
   "scripts": {
@@ -9,18 +9,14 @@
     "typecheck": "tsc --noEmit"
   },
   "dependencies": {
-    "@google/genai": "2.27.0",
-    "@supabase/supabase-js": "2.117.2",
     "next": "16.3.8",
     "react": "19.3.0",
-    "react-dom": "19.3.0",
-    "three": "0.186.1"
+    "react-dom": "19.3.0"
   },
   "devDependencies": {
     "@types/node": "^22.18.0",
     "@types/react": "^19.2.0",
     "@types/react-dom": "^19.2.0",
-    "@types/three": "0.186.0",
     "typescript": "^5.9.2"
   },
   "engines": {
