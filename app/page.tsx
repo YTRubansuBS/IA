@@ -27,6 +27,12 @@ type Game = {
   maxPlayers: number;
   avatar: string;
   stats?: Stats;
+  diagnostics?: {
+    universeId: string;
+    days: number;
+    partialErrors: string[];
+    apiKeyConfigured: boolean;
+  };
 };
 
 type Series = { time: string; value: number };
@@ -146,7 +152,7 @@ export default function Home() {
       const r = await fetch(`/api/roblox/game/${game.id}?days=${days}`, { cache: "no-store" });
       const data = await r.json();
       if (!r.ok) throw new Error(data.error || "Impossible de charger les analytics.");
-      setSelectedGame({ ...game, stats: data.stats });
+      setSelectedGame({ ...game, stats: data.stats, diagnostics: data.diagnostics });
     } catch (e) {
       setError(e instanceof Error ? e.message : "Erreur analytics.");
     } finally { setGameLoading(false); }
@@ -209,7 +215,14 @@ export default function Home() {
                 <section className="dashboard">
                   <div className="dashHead"><div><span className="eyebrow">ANALYTICS</span><h2>{selectedGame.name}</h2><p>Universe ID {selectedGame.id} · Place ID {selectedGame.placeId}</p></div><a href={`https://www.roblox.com/games/${selectedGame.placeId}`} target="_blank" rel="noreferrer">Ouvrir sur Roblox ↗</a></div>
                   {gameLoading && <div className="thinLoading"><div className="spinner small" /> Récupération des métriques…</div>}
-                  {!selectedGame.stats ? <div className="apiNotice"><b>Analytics non disponibles.</b><span>Les informations publiques du jeu sont visibles. Pour les analytics Creator, ajoute une clé Roblox Open Cloud avec <code>universe.analytics:read</code>.</span></div> : (
+                  {!selectedGame.stats ? <div className="apiNotice"><b>Analytics non disponibles.</b><span>La requête Roblox a échoué : regarde le message d'erreur affiché en haut. La clé doit avoir <code>universe.analytics:read</code> et être disponible en Production sur Vercel.</span></div> : (
+                    <>
+                      {selectedGame.diagnostics?.partialErrors?.length ? (
+                        <div className="apiNotice warning">
+                          <b>Certaines métriques Roblox ne sont pas disponibles.</b>
+                          <span>{selectedGame.diagnostics.partialErrors.slice(0, 4).join(" · ")}</span>
+                        </div>
+                      ) : null}
                     <>
                       <div className="metrics">
                         <MetricCard label="DAU" value={num(last(selectedGame.stats.dau))} sub="dernier jour" />
@@ -246,7 +259,13 @@ export default function Home() {
                         </div>
                       </article>
                     </>
-                  )}
+                    )}
+                  {selectedGame.stats && selectedGame.diagnostics?.partialErrors?.length ? (
+                    <div className="apiNotice warning">
+                      <b>Diagnostic</b>
+                      <span>{selectedGame.diagnostics.partialErrors.length} métrique(s) Roblox ont été ignorée(s) pour éviter de bloquer tout le tableau de bord.</span>
+                    </div>
+                  ) : null}
                 </section>
               )}
 
