@@ -70,8 +70,13 @@ async function query(
     const message =
       data?.message ||
       data?.error ||
+      data?.code ||
       `Roblox Analytics HTTP ${response.status}`;
-    throw new Error(`${metric}: ${message}`);
+    const hint =
+      response.status === 403
+        ? " Vérifie que la clé API possède universe.analytics:read et que cet univers est autorisé dans la clé."
+        : "";
+    throw new Error(`${metric}: Roblox Analytics HTTP ${response.status} — ${message}.${hint}`);
   }
 
   if (data?.done === false && data?.path) {
@@ -325,6 +330,10 @@ export async function GET(
         error: message,
         code: "ROBLOX_ANALYTICS_REQUEST_FAILED",
         universeId: id,
+        hint:
+          message.includes("HTTP 403")
+            ? "La clé Roblox est présente mais Roblox refuse l'accès Analytics. Vérifie universe.analytics:read et les expériences autorisées dans la clé."
+            : undefined,
       },
       { status: 502 },
     );
