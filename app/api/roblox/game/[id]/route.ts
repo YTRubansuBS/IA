@@ -11,9 +11,8 @@ const cache=new Map<string,{expires:number;data:any}>();
 const CACHE_MS=90000;
 
 function granularity(days:number,metric:string){
-  if(["ForwardD1Retention","ForwardD7Retention","ForwardD30Retention"].includes(metric)) return days<=90?"OneDay":"None";
-  if(days<=30)return"OneDay";
-  if(days<=90)return"OneWeek";
+  if(["ForwardD1Retention","ForwardD7Retention","ForwardD30Retention"].includes(metric)) return days<=90?"OneDay":"OneMonth";
+  if(days<=90)return"OneDay";
   return"OneMonth";
 }
 function dates(days:number){const end=new Date();end.setUTCHours(0,0,0,0);const start=new Date(end);start.setUTCDate(start.getUTCDate()-days);return{start:start.toISOString(),end:end.toISOString()};}
@@ -42,8 +41,7 @@ async function build(universe:string,key:string,days:number,section:string){
   const range=dates(days),errors:string[]=[];
   const defs=section==="monetization"?MONETIZATION:section==="advanced"?ADVANCED:CORE;
   const stats:any={};
-  const results=await Promise.all(defs.map(async([name,metric])=>[name,flat((await safe(universe,key,metric,days,range,errors)).values)] as const));
-  for(const[x,v]of results)stats[x]=v;
+  for(const [name,metric] of defs){const result=await safe(universe,key,metric,days,range,errors);stats[name]=flat(result.values);}
   if(section==="overview"){const mau=await safe(universe,key,"MonthlyActiveUsers",days,range,errors);stats.mau=one(mau.values);}
   if(section==="audience"){
     const [platform,country,age,newReturning]=await Promise.all([
