@@ -223,7 +223,6 @@ export default function Home() {
                           <span>{selectedGame.diagnostics.partialErrors.slice(0, 4).join(" · ")}</span>
                         </div>
                       ) : null}
-                    <>
                       <div className="metrics">
                         <MetricCard label="DAU" value={num(last(selectedGame.stats.dau))} sub="dernier jour" />
                         <MetricCard label="Temps de jeu" value={`${(last(selectedGame.stats.playtimeHours) ?? 0).toFixed(1)} h`} sub="dernier jour" />
@@ -258,7 +257,6 @@ export default function Home() {
                           {Object.entries(selectedGame.stats.rfy).map(([k,v]) => <div className="signal" key={k}><span>{k.replace(/([A-Z])/g," $1")}</span><b>{typeof v === "number" ? (k.toLowerCase().includes("ptr") || k.toLowerCase().includes("bounce") ? pct(v) : v.toFixed(2)) : "—"}</b></div>)}
                         </div>
                       </article>
-                    </>
                     )}
                   {selectedGame.stats && selectedGame.diagnostics?.partialErrors?.length ? (
                     <div className="apiNotice warning">
