@@ -257,7 +257,8 @@ export default function Home() {
                           {Object.entries(selectedGame.stats.rfy).map(([k,v]) => <div className="signal" key={k}><span>{k.replace(/([A-Z])/g," $1")}</span><b>{typeof v === "number" ? (k.toLowerCase().includes("ptr") || k.toLowerCase().includes("bounce") ? pct(v) : v.toFixed(2)) : "—"}</b></div>)}
                         </div>
                       </article>
-                    )}
+                    </>
+                  )}
                   {selectedGame.stats && selectedGame.diagnostics?.partialErrors?.length ? (
                     <div className="apiNotice warning">
                       <b>Diagnostic</b>
