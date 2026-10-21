@@ -11,7 +11,7 @@ const cache=new Map<string,{expires:number;data:any}>();
 const CACHE_MS=90000;
 
 function granularity(days:number,metric:string){
-  if(["ForwardD1Retention","ForwardD7Retention","ForwardD30Retention"].includes(metric)) return days<=90?"OneDay":"OneMonth";
+  if(["ForwardD1Retention","ForwardD7Retention","ForwardD30Retention","MonthlyActiveUsers"].includes(metric)) return "OneDay";
   if(days<=90)return"OneDay";
   return"OneMonth";
 }
@@ -22,7 +22,7 @@ async function query(universe:string,key:string,metric:string,gran:string,start:
     const r=await fetch(`https://apis.roblox.com/analytics-query-api/v1/universes/${universe}/metrics`,{method:"POST",headers:{"x-api-key":key,"Content-Type":"application/json"},body:JSON.stringify(body),cache:"no-store"});
     let data:any=await r.json().catch(()=>null);
     if(r.status===429&&attempt<2){const wait=Math.min(Math.max(Number(r.headers.get("retry-after")||"2"),1),10);await new Promise(x=>setTimeout(x,wait*1000));continue;}
-    if(!r.ok)throw new Error(`${metric}: Roblox Analytics HTTP ${r.status} — ${data?.message||data?.error||data?.code||"erreur inconnue"}`);
+    if(!r.ok){const detail=typeof data==="string"?data:(data?.message||data?.error||data?.code||data?.details||JSON.stringify(data));throw new Error(`${metric}: Roblox Analytics HTTP ${r.status} — ${detail}`);}
     if(data?.done===false&&data?.path){
       for(let i=0;i<30&&!data.done;i++){await new Promise(x=>setTimeout(x,500));const p=await fetch(`https://apis.roblox.com/analytics-query-api/${data.path}`,{headers:{"x-api-key":key},cache:"no-store"});data=await p.json().catch(()=>null);if(!p.ok)throw new Error(`${metric}: Roblox Analytics polling HTTP ${p.status}`);}
       if(!data?.done)throw new Error(`${metric}: requête Roblox Analytics trop longue`);
